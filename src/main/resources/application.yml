@@ -1,0 +1,22 @@
+server:
+  port: 8080
+
+spring:
+  servlet:
+    multipart:
+      max-file-size: 50MB
+      max-request-size: 50MB
+
+ollama:
+  base-url: http://localhost:11434
+  model: qwen2.5vl:3b
+  timeout: 5m
+  num-ctx: 8192
+  ocr-prompt: >
+    Extract all visible text from this document page.
+    Return plain text only, preserve reading order.
+    Do not describe the image.
+
+ocr:
+  render-dpi: 200
+  max-image-dimension: 1536

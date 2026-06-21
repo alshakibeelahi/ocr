@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PDF OCR — Ollama Vision</title>
+    <link rel="icon" href="data:,">
+    <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+    <main class="container">
+        <header>
+            <h1>PDF OCR</h1>
+            <p class="subtitle">Upload a PDF for page-by-page OCR via Ollama vision model</p>
+        </header>
+
+        <section id="readinessSection" class="readiness-section hidden">
+            <p id="readinessText"></p>
+        </section>
+
+        <section class="upload-section">
+            <form id="uploadForm">
+                <label class="file-label" for="pdfFile">
+                    <span id="fileLabel">Choose PDF file</span>
+                    <input type="file" id="pdfFile" accept="application/pdf" required>
+                </label>
+                <button type="submit" id="submitBtn">Start OCR</button>
+            </form>
+        </section>
+
+        <section id="statusSection" class="status-section hidden">
+            <div class="progress-bar">
+                <div id="progressFill" class="progress-fill"></div>
+            </div>
+            <p id="statusText" class="status-text">Waiting...</p>
+        </section>
+
+        <section id="resultsSection" class="results-section hidden">
+            <div class="results-header">
+                <h2>Results</h2>
+                <button id="downloadBtn" class="secondary-btn hidden">Download JSON</button>
+            </div>
+            <div id="pagesContainer"></div>
+        </section>
+
+        <section id="errorSection" class="error-section hidden">
+            <p id="errorText"></p>
+        </section>
+    </main>
+    <script src="/app.js"></script>
+</body>
+</html>
