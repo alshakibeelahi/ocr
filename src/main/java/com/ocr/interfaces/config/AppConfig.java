@@ -10,7 +10,7 @@ import org.springframework.web.reactive.function.client.WebClient;
 import java.util.concurrent.Executor;
 
 @Configuration
-@EnableConfigurationProperties({OllamaProperties.class, OcrProperties.class})
+@EnableConfigurationProperties({OllamaProperties.class, OcrProperties.class, CallbackAuthProperties.class})
 public class AppConfig {
 
     @Bean
@@ -18,6 +18,11 @@ public class AppConfig {
         return WebClient.builder()
                 .baseUrl(properties.baseUrl())
                 .build();
+    }
+
+    @Bean
+    WebClient.Builder webClientBuilder() {
+        return WebClient.builder();
     }
 
     @Bean(name = "ocrTaskExecutor")

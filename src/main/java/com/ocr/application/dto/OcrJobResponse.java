@@ -33,6 +33,10 @@ public record OcrJobResponse(
                 pages
         );
     }
+
+    public String firstPageText() {
+        return pages == null || pages.isEmpty() ? null : pages.getFirst().text();
+    }
 }
 
 @JsonInclude(JsonInclude.Include.NON_NULL)

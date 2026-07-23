@@ -1,22 +1,89 @@
 server:
-  port: 8080
+  port: ${SERVER_PORT:8080}
 
 spring:
   servlet:
     multipart:
-      max-file-size: 50MB
-      max-request-size: 50MB
+      max-file-size: ${MAX_FILE_SIZE:50MB}
+      max-request-size: ${MAX_FILE_SIZE:50MB}
 
 ollama:
-  base-url: http://localhost:11434
-  model: qwen2.5vl:3b
-  timeout: 5m
-  num-ctx: 8192
+  base-url: ${OLLAMA_BASE_URL:http://localhost:11434}
+  model: ${OLLAMA_MODEL:qwen2.5vl:3b}
+  # Idle timeout: fails only if Ollama emits nothing for this long (CPU image decode is silent).
+  timeout: ${OLLAMA_IDLE_TIMEOUT:10m}
+  # Hard cap for one full extraction call.
+  request-timeout: ${OLLAMA_REQUEST_TIMEOUT:30m}
+  # Keep the model loaded in (GPU) memory between jobs.
+  keep-alive: ${OLLAMA_KEEP_ALIVE:30m}
+  num-ctx: ${OLLAMA_NUM_CTX:8192}
+  max-prompt-chars: 6500
   ocr-prompt: >
     Extract all visible text from this document page.
     Return plain text only, preserve reading order.
     Do not describe the image.
+  pi-data-extraction-prompt: >
+    You are a senior trade finance officer, intelligent document analyst, and
+    elegant banker. Analyze the full PDF as one ordered document set, not page
+    by page. It may contain one Proforma Invoice, multiple Proforma Invoices,
+    or other trade documents. Layouts vary widely: tables, free text, letters,
+    stamps, handwriting, any language or template. Extract by meaning, not by
+    position. Return ONLY valid JSON. No markdown, comments, or
+    explanation. Never guess. If a value is not visible, return null. Preserve
+    original wording for addresses, payment terms, shipment terms, remarks,
+    clauses, document rules, references, currencies, units, HS codes, and goods
+    descriptions. Dates may be normalized to YYYY-MM-DD only when unambiguous;
+    otherwise preserve the visible date. Use table headers and business context
+    to bind each HS code/product row with quantity, unit, unit price, and total.
+    For ONE PI return exactly this object shape:
+    {"DEFN_PROFORMA_INVOICE":{"pi_no":null,"pi_date":null,"applicant_name":null,
+    "applicant_addr":null,"beneficiary_name":null,"beneficiary_addr":null,
+    "bank_name":null,"swift":null,"currency":null,"payment_terms":null,
+    "partial_shipment":null,"shipment_validity":null,"draft_at_days":null,
+    "delivery_date":null,"delivery_address":null,"pi_validity_days":null,
+    "total_amount":null,"status":"Draft","remarks":null,"content":null},
+    "DEFN_PROFORMA_INVOICE_HSC":[{"sl_no":null,"style_no":null,
+    "description":null,"quantity":null,"quantity_unit":null,"net_weight":null,
+    "unit_price":null,"total_amount":null,"hs_code":null}]}
+    For MULTIPLE PIs return exactly:
+    {"PROFORMA_INVOICES":[{"unique_id":"pi-1","DEFN_PROFORMA_INVOICE":{},
+    "DEFN_PROFORMA_INVOICE_HSC":[]}]} using pi-1, pi-2, etc. in document
+    order. Each PI item must use the same two record shapes above.
+    Field mapping rules: applicant is buyer/importer/applicant if visible;
+    beneficiary is seller/exporter/beneficiary if visible; bank_name is the
+    most relevant beneficiary/advising/collecting bank name plus branch if
+    visible; swift is SWIFT/BIC; draft_at_days is numeric tenor days from LC or
+    payment term; shipment_validity is shipment period/validity; delivery_address
+    is factory/delivery/from-to address; remarks contains visible NB, notes,
+    declarations, special instructions, and banker-relevant warnings.
+    Do not include summary/total rows in DEFN_PROFORMA_INVOICE_HSC. If a table
+    row only represents total quantity/amount and no product/style/description,
+    put its amount in DEFN_PROFORMA_INVOICE.total_amount and omit that row.
+    Numeric amount fields must be JSON numbers without currency symbols or
+    thousands separators; for example use 1958.07, not "$ 1,958.07". Every HSC
+    item row MUST include hs_code: if the PI shows one common HS code anywhere
+    (for example in terms like "HS CODE: 4819.10.00"), copy that exact hs_code
+    into every HSC item row unless a row has its own visible HS code.
+    currency is MANDATORY when determinable: read it from the amount column
+    header (for example "US $", "USD", "EUR"), currency symbols near amounts,
+    or payment/amount-in-words text such as "U.S. DOLLAR" (then use "USD").
+    Only return null currency when no currency evidence exists anywhere.
+    Put every extra useful extraction inside DEFN_PROFORMA_INVOICE.content as a
+    JSON object, not a string. Include there any additional banks with roles,
+    incoterms and named place, ports, shipment mode, partial/transshipment text,
+    country of origin/destination, LC/export LC references, document rules,
+    clauses, all dates, all references, contacts, signatures, amount in words,
+    subtotal/tax/freight/discount, package/carton/CBM/weights, raw tables,
+    confidence/evidence, and other trade-initiation fields. If there is no extra
+    data, content is null.
 
 ocr:
-  render-dpi: 200
-  max-image-dimension: 1536
+  render-dpi: ${OCR_RENDER_DPI:200}
+  max-image-dimension: ${OCR_MAX_IMAGE_DIMENSION:1536}
+
+callback-auth:
+  token-url: ${CALLBACK_AUTH_TOKEN_URL:http://192.168.10.56:9080/realms/MicroCube_dev/protocol/openid-connect/token}
+  client-id: ${CALLBACK_AUTH_CLIENT_ID:Swift_BE}
+  client-secret: ${CALLBACK_AUTH_CLIENT_SECRET:}
+  scope: ${CALLBACK_AUTH_SCOPE:}
+  timeout: ${CALLBACK_AUTH_TIMEOUT:30s}

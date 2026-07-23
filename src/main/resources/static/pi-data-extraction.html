@@ -3,18 +3,18 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PDF OCR — Ollama Vision</title>
+    <title>PI Data Extraction - Ollama Vision</title>
     <link rel="icon" href="data:,">
     <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
     <main class="container">
         <header>
-            <h1>PDF OCR</h1>
-            <p class="subtitle">Upload a PDF for page-by-page OCR via Ollama vision model</p>
+            <h1>PI Data Extraction</h1>
+            <p class="subtitle">Upload one or multiple PI/trade documents. The job runs in the background and posts the result to your callback URL.</p>
             <nav class="app-nav" aria-label="Document tools">
-                <a class="active" href="/">OCR</a>
-                <a href="/pi-data-extraction.html">PI Data Extraction</a>
+                <a href="/">OCR</a>
+                <a class="active" href="/pi-data-extraction.html">PI Data Extraction</a>
             </nav>
         </header>
 
@@ -25,10 +25,17 @@
         <section class="upload-section">
             <form id="uploadForm">
                 <label class="file-label" for="pdfFile">
-                    <span id="fileLabel">Choose PDF file</span>
-                    <input type="file" id="pdfFile" accept="application/pdf" required>
+                    <span id="fileLabel">Choose PI PDF or image</span>
+                    <input type="file" id="pdfFile" accept="application/pdf,image/png,image/jpeg" required>
                 </label>
-                <button type="submit" id="submitBtn">Start OCR</button>
+                <input
+                        type="url"
+                        id="callbackUrl"
+                        name="callbackUrl"
+                        placeholder="Callback URL"
+                        required
+                >
+                <button type="submit" id="submitBtn">Start Extraction Job</button>
             </form>
         </section>
 
@@ -41,7 +48,7 @@
 
         <section id="resultsSection" class="results-section hidden">
             <div class="results-header">
-                <h2>Results</h2>
+                <h2>Extracted Data</h2>
                 <button id="downloadBtn" class="secondary-btn hidden">Download JSON</button>
             </div>
             <div id="pagesContainer"></div>
@@ -51,6 +58,6 @@
             <p id="errorText"></p>
         </section>
     </main>
-    <script src="/app.js"></script>
+    <script src="/pi-data-extraction.js"></script>
 </body>
 </html>

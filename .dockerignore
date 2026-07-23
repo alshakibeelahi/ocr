@@ -1,0 +1,9 @@
+target/
+.git/
+.idea/
+*.iml
+*.pdf
+*.tar
+.env
+dist/
+scripts/

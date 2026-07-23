@@ -1,3 +1,4 @@
+# Dev stack: Ollama only. Run the app with: mvn spring-boot:run -s .mvn/settings.xml
 services:
   ollama:
     image: ollama/ollama:latest
@@ -6,6 +7,12 @@ services:
       - "11434:11434"
     volumes:
       - ollama_data:/root/.ollama
+    environment:
+      OLLAMA_KEEP_ALIVE: ${OLLAMA_KEEP_ALIVE:-30m}
+      OLLAMA_NUM_PARALLEL: 1
+      OLLAMA_MAX_LOADED_MODELS: 1
+      OLLAMA_FLASH_ATTENTION: 1
+      OLLAMA_KV_CACHE_TYPE: q8_0
     healthcheck:
       test: ["CMD", "ollama", "list"]
       interval: 10s
@@ -30,10 +37,10 @@ services:
         condition: service_healthy
     environment:
       OLLAMA_HOST: http://ollama:11434
-      OLLAMA_MODEL: qwen2.5vl:3b
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2.5vl:3b}
     entrypoint: ["/bin/sh", "-c"]
     command:
-      - 'echo "Pulling model: $$OLLAMA_MODEL" && ollama pull "$$OLLAMA_MODEL" && echo "Model pull complete." && ollama list'
+      - 'if ollama list | grep -q "$$OLLAMA_MODEL"; then echo "Model already present."; else echo "Pulling model: $$OLLAMA_MODEL" && ollama pull "$$OLLAMA_MODEL"; fi && ollama list'
     restart: "no"
 
 volumes:

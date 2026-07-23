@@ -15,19 +15,27 @@ public class PdfBoxPageExtractor implements PdfPageExtractor {
 
     @Override
     public int countPages(byte[] pdfBytes) throws IOException {
-        try (PDDocument document = Loader.loadPDF(pdfBytes)) {
+        try (PDDocument document = loadDocument(pdfBytes)) {
             return document.getNumberOfPages();
         }
     }
 
     @Override
     public BufferedImage renderPage(byte[] pdfBytes, int pageIndex, int dpi) throws IOException {
-        try (PDDocument document = Loader.loadPDF(pdfBytes)) {
+        try (PDDocument document = loadDocument(pdfBytes)) {
             if (pageIndex < 0 || pageIndex >= document.getNumberOfPages()) {
                 throw new IllegalArgumentException("Page index out of bounds: " + pageIndex);
             }
             PDFRenderer renderer = new PDFRenderer(document);
             return renderer.renderImageWithDPI(pageIndex, dpi, ImageType.RGB);
+        }
+    }
+
+    private PDDocument loadDocument(byte[] pdfBytes) throws IOException {
+        try {
+            return Loader.loadPDF(pdfBytes);
+        } catch (IOException e) {
+            throw new IllegalArgumentException("Invalid or corrupted PDF file", e);
         }
     }
 }

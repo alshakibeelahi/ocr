@@ -9,7 +9,19 @@ public record OllamaProperties(
         String baseUrl,
         String model,
         Duration timeout,
+        Duration requestTimeout,
+        String keepAlive,
         int numCtx,
-        String ocrPrompt
+        int maxPromptChars,
+        String ocrPrompt,
+        String piDataExtractionPrompt
 ) {
+
+    public Duration requestTimeout() {
+        return requestTimeout != null ? requestTimeout : Duration.ofMinutes(30);
+    }
+
+    public String keepAlive() {
+        return keepAlive == null || keepAlive.isBlank() ? "30m" : keepAlive;
+    }
 }

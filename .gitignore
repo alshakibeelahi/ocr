@@ -31,3 +31,7 @@ build/
 
 ### VS Code ###
 .vscode/
+
+### Deployment packages (multi-GB tars) ###
+scripts/dist/
+*.tar

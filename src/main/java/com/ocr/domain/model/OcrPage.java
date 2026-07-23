@@ -53,6 +53,10 @@ public class OcrPage {
         }
     }
 
+    public void replaceText(String text) {
+        this.extractedText = text != null ? text : "";
+    }
+
     public void complete(PageMetadata metadata) {
         this.status = PageStatus.COMPLETED;
         this.metadata = metadata;
