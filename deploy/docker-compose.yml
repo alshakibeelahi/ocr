@@ -1,0 +1,122 @@
+# =============================================================================
+# OCR / PI Data Extraction - PRODUCTION stack
+#
+#   Everything (app + Ollama) runs in Docker. CPU vs GPU is chosen ONLY in
+#   .env via COMPOSE_PROFILES:
+#       cpu   - no GPU
+#       gpu   - NVIDIA GPU (nvidia driver + nvidia-container-toolkit required)
+#       rocm  - AMD/Radeon GPU (Linux host with amdgpu driver)
+#
+#   Run from this folder:
+#       docker compose up -d --build
+#
+#   Exactly one ollama-* service starts, selected by the profile. All three
+#   share the same container name and data volume (YAML anchors keep the
+#   common config in sync).
+# =============================================================================
+
+x-ollama-common: &ollama-common
+  container_name: ocr-ollama
+  volumes:
+    - ollama_data:/root/.ollama
+  environment: &ollama-env
+    OLLAMA_KEEP_ALIVE: ${OLLAMA_KEEP_ALIVE:-30m}
+    OLLAMA_NUM_PARALLEL: ${OLLAMA_NUM_PARALLEL:-1}
+    OLLAMA_MAX_LOADED_MODELS: ${OLLAMA_MAX_LOADED_MODELS:-1}
+    # Low-VRAM optimizations (2-4 GB cards); harmless on big GPUs and CPU.
+    OLLAMA_FLASH_ATTENTION: ${OLLAMA_FLASH_ATTENTION:-1}
+    OLLAMA_KV_CACHE_TYPE: ${OLLAMA_KV_CACHE_TYPE:-q8_0}
+  networks:
+    ocr:
+      aliases: [ocr-ollama-host]
+  healthcheck:
+    test: ["CMD", "ollama", "list"]
+    interval: 10s
+    timeout: 5s
+    retries: 12
+    start_period: 30s
+  restart: unless-stopped
+
+services:
+
+  # ---- CPU mode (COMPOSE_PROFILES=cpu) --------------------------------------
+  ollama-cpu:
+    <<: *ollama-common
+    profiles: [cpu]
+    image: ${OLLAMA_IMAGE:-ollama/ollama:latest}
+
+  # ---- NVIDIA GPU mode (COMPOSE_PROFILES=gpu) -------------------------------
+  # Requires NVIDIA driver + nvidia-container-toolkit on the host.
+  ollama-gpu:
+    <<: *ollama-common
+    profiles: [gpu]
+    image: ${OLLAMA_IMAGE:-ollama/ollama:latest}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: ${GPU_COUNT:-all}
+              capabilities: [gpu]
+
+  # ---- AMD GPU mode (COMPOSE_PROFILES=rocm) ---------------------------------
+  # Requires amdgpu kernel driver on the host (Linux only).
+  # For older Radeon cards set HSA_OVERRIDE_GFX_VERSION in .env
+  # (e.g. 10.3.0 for RX 6000 series).
+  ollama-rocm:
+    <<: *ollama-common
+    profiles: [rocm]
+    image: ${OLLAMA_IMAGE_ROCM:-ollama/ollama:rocm}
+    devices:
+      - /dev/kfd
+      - /dev/dri
+    environment:
+      <<: *ollama-env
+      HSA_OVERRIDE_GFX_VERSION: ${HSA_OVERRIDE_GFX_VERSION:-}
+
+  # Pulls the vision model on first start (skipped when already present,
+  # e.g. when using a bundled image with the model baked in).
+  ollama-init:
+    image: ${OLLAMA_IMAGE:-ollama/ollama:latest}
+    container_name: ocr-ollama-init
+    environment:
+      OLLAMA_HOST: http://ocr-ollama-host:11434
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2.5vl:3b}
+    networks: [ocr]
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - 'sleep 5; if ollama list | grep -q "$$OLLAMA_MODEL"; then echo "Model already present."; else echo "Pulling model: $$OLLAMA_MODEL" && ollama pull "$$OLLAMA_MODEL"; fi && ollama list'
+    restart: "no"
+
+  ocr-app:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    image: ocr-app:${VERSION:-latest}
+    container_name: ocr-app
+    ports:
+      - "${OCR_APP_PORT:-8080}:8080"
+    environment:
+      OLLAMA_BASE_URL: http://ocr-ollama-host:11434
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2.5vl:3b}
+      OLLAMA_IDLE_TIMEOUT: ${OLLAMA_IDLE_TIMEOUT:-10m}
+      OLLAMA_REQUEST_TIMEOUT: ${OLLAMA_REQUEST_TIMEOUT:-30m}
+      OLLAMA_KEEP_ALIVE: ${OLLAMA_KEEP_ALIVE:-30m}
+      OLLAMA_NUM_CTX: ${OLLAMA_NUM_CTX:-8192}
+      OCR_RENDER_DPI: ${OCR_RENDER_DPI:-200}
+      OCR_MAX_IMAGE_DIMENSION: ${OCR_MAX_IMAGE_DIMENSION:-1536}
+      MAX_FILE_SIZE: ${MAX_FILE_SIZE:-50MB}
+      CALLBACK_AUTH_TOKEN_URL: ${CALLBACK_AUTH_TOKEN_URL:-}
+      CALLBACK_AUTH_CLIENT_ID: ${CALLBACK_AUTH_CLIENT_ID:-}
+      CALLBACK_AUTH_CLIENT_SECRET: ${CALLBACK_AUTH_CLIENT_SECRET:-}
+      CALLBACK_AUTH_SCOPE: ${CALLBACK_AUTH_SCOPE:-}
+      JAVA_OPTS: ${JAVA_OPTS:--XX:MaxRAMPercentage=75.0}
+    networks: [ocr]
+    restart: unless-stopped
+
+networks:
+  ocr:
+    driver: bridge
+
+volumes:
+  ollama_data:

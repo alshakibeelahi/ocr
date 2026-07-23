@@ -35,3 +35,6 @@ build/
 ### Deployment packages (multi-GB tars) ###
 scripts/dist/
 *.tar
+
+### Local deployment config (contains secrets) ###
+deploy/.env
