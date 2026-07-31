@@ -82,8 +82,9 @@ ocr:
   max-image-dimension: ${OCR_MAX_IMAGE_DIMENSION:1536}
 
 callback-auth:
+  auth-required: ${CALLBACK_AUTH_REQUIRED:true}
   token-url: ${CALLBACK_AUTH_TOKEN_URL:http://192.168.10.56:9080/realms/MicroCube_dev/protocol/openid-connect/token}
-  client-id: ${CALLBACK_AUTH_CLIENT_ID:Swift_BE}
-  client-secret: ${CALLBACK_AUTH_CLIENT_SECRET:}
+  client-id: ${CALLBACK_AUTH_CLIENT_ID:FinTrade_BE}
+  client-secret: ${CALLBACK_AUTH_CLIENT_SECRET:g8r097ZPD1LiMRSDmTWtiLrvnYC7HJFw}
   scope: ${CALLBACK_AUTH_SCOPE:}
   timeout: ${CALLBACK_AUTH_TIMEOUT:30s}

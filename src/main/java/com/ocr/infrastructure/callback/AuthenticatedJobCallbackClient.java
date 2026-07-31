@@ -42,7 +42,6 @@ public class AuthenticatedJobCallbackClient implements JobCallbackPort {
     public void postJobResult(String callbackUrl, OcrJobResponse jobResponse) {
         URI callbackUri = validateCallbackUrl(callbackUrl);
         log.info("Starting callback delivery: jobId={}, status={}, callbackUrl={}", jobResponse.jobId(), jobResponse.status(), callbackUri);
-        String token = fetchAccessToken();
         Map<String, Object> payload = buildPayload(jobResponse);
         Duration timeout = properties.timeout() != null ? properties.timeout() : Duration.ofSeconds(30);
         log.info("Posting callback payload: jobId={}, status={}, hasExtraction={}", jobResponse.jobId(), jobResponse.status(), payload.containsKey("extraction"));
@@ -51,7 +50,11 @@ public class AuthenticatedJobCallbackClient implements JobCallbackPort {
                 .post()
                 .uri(callbackUri)
                 .contentType(MediaType.APPLICATION_JSON)
-                .headers(headers -> headers.setBearerAuth(token))
+                .headers(headers -> {
+                    if (properties.authRequired()) {
+                        headers.setBearerAuth(fetchAccessToken());
+                    }
+                })
                 .bodyValue(payload)
                 .retrieve()
                 .toBodilessEntity()

@@ -6,6 +6,7 @@ import java.time.Duration;
 
 @ConfigurationProperties(prefix = "callback-auth")
 public record CallbackAuthProperties(
+        boolean authRequired,
         String tokenUrl,
         String clientId,
         String clientSecret,
