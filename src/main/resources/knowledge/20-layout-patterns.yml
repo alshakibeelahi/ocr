@@ -1,0 +1,82 @@
+# =============================================================================
+# Layout patterns: WHERE things tend to sit in a particular family of documents.
+#
+# These are retrieved by similarity against the incoming document's signature
+# (issuer line, document title, column headers, currency tokens), so they only
+# reach the model when the document actually looks like the one they describe.
+#
+# This is the file that grows as you meet new supplier templates. Add an entry
+# with an `issuer` and the header words that identify the template, and describe
+# WHERE the awkward fields live - never WHAT they contain.
+# =============================================================================
+
+- key: layout-pattern.hs-code-in-terms-block
+  type: LAYOUT_PATTERN
+  title: HS code printed once in the terms or notes block
+  tags: [hs-code, terms-block, footer]
+  body: |
+    Signals: the item table has no HS code column, and a line such as
+    "H.S CODE : ####.##.##" or "HS Code no. ####.##" appears in the terms, notes or
+    remarks block below the table.
+
+    Read the code from that block and apply it to every item row. Keep the surrounding
+    sentence in remarks or content so the reviewer can see where it came from.
+
+- key: layout-pattern.continuation-table-across-pages
+  type: LAYOUT_PATTERN
+  title: Item table continues on later pages
+  tags: [multi-page, table, continuation]
+  body: |
+    Signals: page 2+ starts directly with table rows, or repeats the column header row,
+    with no new invoice number and no new party block.
+
+    These rows belong to the SAME invoice. Continue numbering items across the page
+    break; do not start a second Proforma Invoice. The grand total usually appears only
+    on the final page.
+
+- key: layout-pattern.letterhead-is-beneficiary
+  type: LAYOUT_PATTERN
+  title: Letterhead identifies the beneficiary, boxed block identifies the applicant
+  tags: [parties, letterhead, layout]
+  body: |
+    Signals: a logo and company block at the top of page 1, with a separate boxed or
+    labelled block ("To:", "Messrs.", "Bill To", "Buyer") lower on the page.
+
+    The letterhead company is the beneficiary/seller. The boxed block is the
+    applicant/buyer. Confirm against any "Exporter"/"Importer" labels before relying on
+    this - some ERP templates print the buyer in the letterhead position.
+
+- key: layout-pattern.currency-in-amount-column-header
+  type: LAYOUT_PATTERN
+  title: Currency stated only in the amount column header
+  tags: [currency, table-header]
+  body: |
+    Signals: no currency field anywhere, but the item table's price/amount columns are
+    headed "Unit Price (US$)", "Amount in USD", "Value (EUR)" or similar.
+
+    Take the currency from that header. Amount cells in such tables usually print bare
+    numbers, so the header is the only evidence available.
+
+- key: layout-pattern.scanned-stamped-pi
+  type: LAYOUT_PATTERN
+  title: Scanned copy with stamps and handwritten annotations
+  tags: [scan, stamp, handwriting, low-quality]
+  body: |
+    Signals: skewed page, no text layer, round company stamps overlapping printed text,
+    handwritten additions in the margins.
+
+    Read printed values under a stamp only when you can see them clearly; return null
+    rather than a partially obscured number. Handwritten amendments (a corrected date or
+    quantity) are real amendments - capture the printed value in its field and record
+    the annotation in content.annotations rather than silently choosing one.
+
+- key: layout-pattern.multi-invoice-bundle
+  type: LAYOUT_PATTERN
+  title: Several invoices bundled into one PDF
+  tags: [multi-pi, bundle]
+  body: |
+    Signals: the invoice number changes mid-document, each occurrence preceded by its
+    own letterhead and party block; often each invoice starts on a fresh page.
+
+    Use the PROFORMA_INVOICES array shape, one element per invoice, in document order.
+    Do not merge their item tables and do not sum their totals together.

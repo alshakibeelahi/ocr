@@ -1,0 +1,72 @@
+# =============================================================================
+# Redacted worked examples.
+#
+# HARD RULE for anything added to this file: every digit is masked with # and every
+# name is a placeholder. Examples teach SHAPE. A real value in an example is exactly
+# the thing a model might copy into someone else's invoice, so real values are not
+# allowed here - and the extraction prompt additionally tells the model that example
+# values are always wrong for the document at hand.
+# =============================================================================
+
+- key: example.single-pi-with-common-hs-code
+  type: EXAMPLE
+  title: Single PI, HS code stated once in the terms block
+  tags: [example, single-pi, hs-code, summary-row]
+  body: |
+    INPUT SHAPE (masked)
+      Letterhead:  <BENEFICIARY CO. LTD>, <address>
+      To:          <APPLICANT LTD>, <address>
+      Proforma Invoice No: PI-####/##      Date: ##-Mmm-####
+      Table headers: SL | STYLE | DESCRIPTION | QTY | UNIT | UNIT PRICE (US$) | AMOUNT
+        row 1: # | ST-#### | <goods>        | #### | PCS | #.##  | ####.##
+        row 2: # | ST-#### | <goods>        | #### | PCS | #.##  | ####.##
+        row 3:                 TOTAL                            | ####.##
+      Terms: "PAYMENT: AT ### DAYS SIGHT", "H.S CODE : ####.##.##"
+
+    CORRECT OUTPUT SHAPE
+      - currency "USD", taken from the "UNIT PRICE (US$)" header.
+      - draft_at_days ###, taken from the payment tenor; payment_terms keeps the full
+        sentence.
+      - row 3 is a summary row: it is NOT an item. Its amount becomes
+        DEFN_PROFORMA_INVOICE.total_amount.
+      - both remaining items carry hs_code "####.##.##" copied from the terms block.
+      - sl_no is 1 and 2 after the summary row is dropped.
+
+- key: example.multi-pi-bundle
+  type: EXAMPLE
+  title: Two invoices in one PDF
+  tags: [example, multi-pi, bundle]
+  body: |
+    INPUT SHAPE (masked)
+      page 1-2: Proforma Invoice No PI-####-A, beneficiary <CO. A>, item table
+      page 3:   Proforma Invoice No PI-####-B, beneficiary <CO. A>, item table
+
+    CORRECT OUTPUT SHAPE
+      {
+        "PROFORMA_INVOICES": [
+          { "unique_id": "pi-1", "DEFN_PROFORMA_INVOICE": { ... }, "DEFN_PROFORMA_INVOICE_HSC": [ ... ] },
+          { "unique_id": "pi-2", "DEFN_PROFORMA_INVOICE": { ... }, "DEFN_PROFORMA_INVOICE_HSC": [ ... ] }
+        ]
+      }
+
+    Each invoice keeps its own total_amount. Do not add the two totals together, and do
+    not merge the item tables even though the beneficiary is the same.
+
+- key: example.ambiguous-values-stay-null
+  type: EXAMPLE
+  title: What to leave null
+  tags: [example, null, ambiguity, grounding]
+  body: |
+    INPUT SHAPE (masked)
+      "Delivery: ##/##/####"          - numeric date, order ambiguous
+      SWIFT line obscured by a stamp
+      no bank block anywhere
+      an amount column with a smudged final digit
+
+    CORRECT OUTPUT SHAPE
+      - delivery_date keeps the visible string "##/##/####" - it is NOT normalised,
+        because ##/## could be day/month or month/day.
+      - swift is null - partially obscured is not readable.
+      - bank_name is null - absent, not inferred from the beneficiary's country.
+      - the smudged amount is null rather than a best guess, and the reviewer sees the
+        gap. A null costs a correction; a wrong number costs a payment.

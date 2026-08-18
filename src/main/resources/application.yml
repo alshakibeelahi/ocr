@@ -2,10 +2,71 @@ server:
   port: ${SERVER_PORT:8080}
 
 spring:
+  autoconfigure:
+    exclude:
+      # V2AiConfig builds the PgVectorStore explicitly, so the knowledge table name and
+      # the vector dimension come from one place (ai.embedding.dimensions) and match the
+      # Flyway migration. Leaving the auto-configuration on would define a second
+      # VectorStore bean named "vectorStore" pointing at the default table, which wins
+      # injection by name and silently writes to the wrong place.
+      - org.springframework.ai.vectorstore.pgvector.autoconfigure.PgVectorStoreAutoConfiguration
+
   servlet:
     multipart:
       max-file-size: ${MAX_FILE_SIZE:50MB}
       max-request-size: ${MAX_FILE_SIZE:50MB}
+
+  mvc:
+    async:
+      # -1 = no async request timeout. A v2 extraction of a large scan on CPU-only
+      # Ollama can legitimately run for many minutes; cutting the request off would
+      # throw away work that is already paid for. Server-side caps still apply per
+      # provider (ai.providers.*.timeout).
+      request-timeout: -1
+
+  # --- v2 only. v1 never touches the database. -------------------------------
+  datasource:
+    url: ${POSTGRES_URL:jdbc:postgresql://localhost:5432/ocr}
+    username: ${POSTGRES_USER:ocr}
+    password: ${POSTGRES_PASSWORD:ocr}
+    hikari:
+      maximum-pool-size: ${POSTGRES_MAX_POOL:10}
+  jpa:
+    hibernate:
+      # Flyway owns the schema. Hibernate only validates that the entities agree with it.
+      ddl-auto: validate
+    open-in-view: false
+    properties:
+      hibernate.jdbc.time_zone: UTC
+  flyway:
+    enabled: ${FLYWAY_ENABLED:true}
+    locations: classpath:db/migration
+    baseline-on-migrate: true
+
+  ai:
+    # Spring AI's model auto-configuration is switched off deliberately. Six vendor
+    # starters on the classpath would otherwise create competing ChatModel beans and
+    # fail startup over an unset API key. ChatModelFactory builds them explicitly
+    # from ai.providers.* below instead.
+    #
+    # EVERY model kind must be set, not just chat: the Azure starter's image and
+    # audio auto-configurations each import the same OpenAIClientBuilder, which
+    # throws "Endpoint must not be empty" at startup when no Azure endpoint is
+    # configured - even though nothing in this application uses images or audio.
+    model:
+      chat: none
+      embedding: none
+      image: none
+      moderation: none
+      audio:
+        transcription: none
+        speech: none
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
 
 ollama:
   base-url: ${OLLAMA_BASE_URL:http://localhost:11434}
@@ -80,6 +141,148 @@ ollama:
 ocr:
   render-dpi: ${OCR_RENDER_DPI:200}
   max-image-dimension: ${OCR_MAX_IMAGE_DIMENSION:1536}
+
+# =============================================================================
+# v2: Spring AI, RAG-grounded, synchronous PI extraction (/api/v2/pi-extraction)
+#
+# Nothing below affects v1. See docs/SETUP.md for the full walkthrough.
+# =============================================================================
+ai:
+  # Provider used when a request does not name one. Ollama = local, no API key,
+  # no data leaving the host.
+  default-provider: ${AI_DEFAULT_PROVIDER:ollama}
+
+  # Bump whenever the system prompt or target schema changes: it is part of the
+  # cache key, so a prompt change can never serve a stale cached extraction.
+  prompt-version: ${AI_PROMPT_VERSION:v2.1}
+
+  # Embedding model for the knowledge base. Deliberately independent of the chat
+  # provider - switching chat vendor must not change the vector space the index
+  # was built in. Changing THIS requires POST /api/v2/knowledge/reindex and a new
+  # Flyway migration if the dimension differs.
+  embedding:
+    provider: ${AI_EMBEDDING_PROVIDER:ollama}
+    model: ${AI_EMBEDDING_MODEL:nomic-embed-text}
+    base-url: ${AI_EMBEDDING_BASE_URL:${OLLAMA_BASE_URL:http://localhost:11434}}
+    api-key: ${AI_EMBEDDING_API_KEY:}
+    dimensions: ${AI_EMBEDDING_DIMENSIONS:768}   # must match V1__v2_extraction_schema.sql
+
+  rag:
+    enabled: ${AI_RAG_ENABLED:true}
+    field-rule-top-k: ${AI_RAG_FIELD_RULE_TOP_K:8}
+    field-rule-threshold: ${AI_RAG_FIELD_RULE_THRESHOLD:0.60}
+    layout-pattern-top-k: ${AI_RAG_LAYOUT_TOP_K:3}
+    layout-pattern-threshold: ${AI_RAG_LAYOUT_THRESHOLD:0.75}
+    example-top-k: ${AI_RAG_EXAMPLE_TOP_K:2}
+    example-threshold: ${AI_RAG_EXAMPLE_THRESHOLD:0.80}
+    max-knowledge-chars: ${AI_RAG_MAX_KNOWLEDGE_CHARS:14000}
+    seed-on-startup: ${AI_RAG_SEED_ON_STARTUP:true}
+
+  extraction:
+    cache-enabled: ${AI_CACHE_ENABLED:true}
+    include-text-layer: ${AI_INCLUDE_TEXT_LAYER:true}
+    max-text-layer-chars: ${AI_MAX_TEXT_LAYER_CHARS:60000}
+    min-text-layer-chars-per-page: ${AI_MIN_TEXT_LAYER_CHARS_PER_PAGE:120}
+    render-parallelism: ${AI_RENDER_PARALLELISM:2}
+    heartbeat-interval: ${AI_HEARTBEAT_INTERVAL:15s}
+
+  # Providers. Enable one by setting its api-key (and enabled: true).
+  # Several names may share a type: groq/deepseek/mistral are all OPENAI-type
+  # entries with a different base-url, which costs no extra dependency.
+  providers:
+    ollama:
+      enabled: ${AI_OLLAMA_ENABLED:true}
+      type: OLLAMA
+      base-url: ${OLLAMA_BASE_URL:http://localhost:11434}
+      model: ${AI_OLLAMA_MODEL:${OLLAMA_MODEL:qwen2.5vl:3b}}
+      num-ctx: ${OLLAMA_NUM_CTX:8192}
+      keep-alive: ${OLLAMA_KEEP_ALIVE:30m}
+      timeout: ${OLLAMA_REQUEST_TIMEOUT:30m}
+      max-images: ${AI_OLLAMA_MAX_IMAGES:40}
+
+    openai:
+      enabled: ${AI_OPENAI_ENABLED:false}
+      type: OPENAI
+      base-url: ${OPENAI_BASE_URL:https://api.openai.com}
+      api-key: ${OPENAI_API_KEY:}
+      model: ${OPENAI_MODEL:gpt-4.1}
+      max-tokens: ${OPENAI_MAX_TOKENS:16384}
+      timeout: ${OPENAI_TIMEOUT:10m}
+      max-images: 20
+
+    anthropic:
+      enabled: ${AI_ANTHROPIC_ENABLED:false}
+      type: ANTHROPIC
+      api-key: ${ANTHROPIC_API_KEY:}
+      model: ${ANTHROPIC_MODEL:claude-sonnet-4-5}
+      max-tokens: ${ANTHROPIC_MAX_TOKENS:16384}
+      timeout: ${ANTHROPIC_TIMEOUT:10m}
+      # Anthropic has no JSON response-format switch; the pipeline extracts the
+      # JSON object from the response instead.
+      json-mode: false
+      max-images: 90
+
+    azure-openai:
+      enabled: ${AI_AZURE_ENABLED:false}
+      type: AZURE_OPENAI
+      endpoint: ${AZURE_OPENAI_ENDPOINT:}
+      api-key: ${AZURE_OPENAI_API_KEY:}
+      deployment-name: ${AZURE_OPENAI_DEPLOYMENT:}
+      model: ${AZURE_OPENAI_DEPLOYMENT:}
+      max-tokens: ${AZURE_OPENAI_MAX_TOKENS:16384}
+      timeout: ${AZURE_OPENAI_TIMEOUT:10m}
+      max-images: 20
+
+    vertex-gemini:
+      enabled: ${AI_VERTEX_ENABLED:false}
+      type: VERTEX_GEMINI
+      # Credentials come from Application Default Credentials
+      # (set GOOGLE_APPLICATION_CREDENTIALS to a service-account key file).
+      project-id: ${VERTEX_PROJECT_ID:}
+      location: ${VERTEX_LOCATION:us-central1}
+      model: ${VERTEX_MODEL:gemini-2.5-pro}
+      max-tokens: ${VERTEX_MAX_TOKENS:16384}
+      timeout: ${VERTEX_TIMEOUT:10m}
+      max-images: 40
+
+    bedrock:
+      enabled: ${AI_BEDROCK_ENABLED:false}
+      type: BEDROCK
+      # Credentials come from the default AWS provider chain.
+      region: ${AWS_REGION:us-east-1}
+      model: ${BEDROCK_MODEL:anthropic.claude-sonnet-4-5-20250929-v1:0}
+      max-tokens: ${BEDROCK_MAX_TOKENS:16384}
+      timeout: ${BEDROCK_TIMEOUT:10m}
+      json-mode: false
+      max-images: 20
+
+    # --- OpenAI-compatible endpoints: configuration only, no extra dependency ---
+    groq:
+      enabled: ${AI_GROQ_ENABLED:false}
+      type: OPENAI
+      base-url: ${GROQ_BASE_URL:https://api.groq.com/openai}
+      api-key: ${GROQ_API_KEY:}
+      model: ${GROQ_MODEL:meta-llama/llama-4-scout-17b-16e-instruct}
+      timeout: ${GROQ_TIMEOUT:10m}
+      max-images: 5
+
+    deepseek:
+      enabled: ${AI_DEEPSEEK_ENABLED:false}
+      type: OPENAI
+      base-url: ${DEEPSEEK_BASE_URL:https://api.deepseek.com}
+      api-key: ${DEEPSEEK_API_KEY:}
+      model: ${DEEPSEEK_MODEL:deepseek-chat}
+      timeout: ${DEEPSEEK_TIMEOUT:10m}
+      max-images: 5
+
+    mistral:
+      enabled: ${AI_MISTRAL_ENABLED:false}
+      type: OPENAI
+      base-url: ${MISTRAL_BASE_URL:https://api.mistral.ai}
+      api-key: ${MISTRAL_API_KEY:}
+      model: ${MISTRAL_MODEL:pixtral-large-latest}
+      timeout: ${MISTRAL_TIMEOUT:10m}
+      max-images: 8
 
 callback-auth:
   auth-required: ${CALLBACK_AUTH_REQUIRED:true}

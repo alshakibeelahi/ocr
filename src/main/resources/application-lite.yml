@@ -1,0 +1,30 @@
+# =============================================================================
+# "lite" profile - v1 only, no database.
+#
+#   java -jar app.jar --spring.profiles.active=lite
+#   (or SPRING_PROFILES_ACTIVE=lite)
+#
+# Runs exactly what the application did before v2 existed: the /api/ocr and
+# /api/v1/pi-data-extraction job endpoints against Ollama, with no PostgreSQL
+# and no knowledge base. Every v2 bean is annotated @Profile("!lite") and simply
+# is not defined here, so nothing asks for a datasource.
+#
+# Use this to roll the new jar out to an existing v1 deployment before the
+# database is ready. /api/v2/** returns 404 under this profile.
+# =============================================================================
+
+spring:
+  autoconfigure:
+    exclude:
+      - org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration
+      - org.springframework.boot.autoconfigure.jdbc.DataSourceTransactionManagerAutoConfiguration
+      - org.springframework.boot.autoconfigure.orm.jpa.HibernateJpaAutoConfiguration
+      - org.springframework.boot.autoconfigure.data.jpa.JpaRepositoriesAutoConfiguration
+      - org.springframework.ai.vectorstore.pgvector.autoconfigure.PgVectorStoreAutoConfiguration
+  flyway:
+    enabled: false
+
+ai:
+  rag:
+    enabled: false
+    seed-on-startup: false

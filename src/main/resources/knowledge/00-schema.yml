@@ -1,0 +1,69 @@
+# =============================================================================
+# Target output schema. Always injected into the prompt - never similarity-matched.
+#
+# Edit here and restart, or edit the live entry through PUT /api/v2/knowledge/{id}.
+# Whenever the SHAPE changes, also bump ai.prompt-version so cached extractions
+# produced under the old schema are not served.
+# =============================================================================
+
+- key: schema.proforma-invoice
+  type: SCHEMA
+  title: Proforma Invoice target JSON schema
+  tags: [schema, output, contract]
+  alwaysInclude: true
+  body: |
+    Return ONE JSON object. No markdown fences, no commentary, no trailing text.
+
+    For a document containing exactly ONE Proforma Invoice, return this shape:
+
+    {
+      "DEFN_PROFORMA_INVOICE": {
+        "pi_no": null,              // invoice / proforma number as printed
+        "pi_date": null,            // issue date
+        "applicant_name": null,     // buyer / importer / applicant
+        "applicant_addr": null,
+        "beneficiary_name": null,   // seller / exporter / beneficiary
+        "beneficiary_addr": null,
+        "bank_name": null,          // beneficiary / advising / collecting bank, incl. branch
+        "swift": null,              // SWIFT / BIC
+        "currency": null,           // ISO code, e.g. "USD"
+        "payment_terms": null,      // original wording
+        "partial_shipment": null,
+        "shipment_validity": null,  // shipment period / validity, original wording
+        "draft_at_days": null,      // numeric tenor days
+        "delivery_date": null,
+        "delivery_address": null,
+        "pi_validity_days": null,
+        "total_amount": null,       // JSON number
+        "status": "Draft",          // always the literal string "Draft"
+        "remarks": null,            // NB / notes / declarations / special instructions
+        "content": null             // JSON object, see the content catch-all rule
+      },
+      "DEFN_PROFORMA_INVOICE_HSC": [
+        {
+          "sl_no": null,
+          "style_no": null,
+          "description": null,
+          "quantity": null,
+          "quantity_unit": null,
+          "net_weight": null,
+          "unit_price": null,       // JSON number
+          "total_amount": null,     // JSON number
+          "hs_code": null
+        }
+      ]
+    }
+
+    For a document containing MULTIPLE Proforma Invoices, return this shape instead,
+    using unique_id "pi-1", "pi-2", ... in document order. Each element repeats the two
+    record shapes above exactly:
+
+    {
+      "PROFORMA_INVOICES": [
+        { "unique_id": "pi-1", "DEFN_PROFORMA_INVOICE": {}, "DEFN_PROFORMA_INVOICE_HSC": [] }
+      ]
+    }
+
+    Emit every key shown above, even when the value is null. Do not add or rename
+    top-level keys. Anything extra you extracted belongs inside
+    DEFN_PROFORMA_INVOICE.content, not at the top level.

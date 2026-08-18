@@ -74,21 +74,47 @@ services:
       <<: *ollama-env
       HSA_OVERRIDE_GFX_VERSION: ${HSA_OVERRIDE_GFX_VERSION:-}
 
-  # Pulls the vision model on first start (skipped when already present,
-  # e.g. when using a bundled image with the model baked in).
+  # Pulls the vision model and the v2 embedding model on first start (each
+  # skipped when already present, e.g. with a bundled image).
   ollama-init:
     image: ${OLLAMA_IMAGE:-ollama/ollama:latest}
     container_name: ocr-ollama-init
     environment:
       OLLAMA_HOST: http://ocr-ollama-host:11434
       OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2.5vl:3b}
+      AI_EMBEDDING_MODEL: ${AI_EMBEDDING_MODEL:-nomic-embed-text}
     networks: [ocr]
     entrypoint: ["/bin/sh", "-c"]
     command:
-      - 'sleep 5; if ollama list | grep -q "$$OLLAMA_MODEL"; then echo "Model already present."; else echo "Pulling model: $$OLLAMA_MODEL" && ollama pull "$$OLLAMA_MODEL"; fi && ollama list'
+      - 'sleep 5; for m in "$$OLLAMA_MODEL" "$$AI_EMBEDDING_MODEL"; do if ollama list | grep -q "$$m"; then echo "Model already present: $$m"; else echo "Pulling model: $$m" && ollama pull "$$m"; fi; done && ollama list'
     restart: "no"
 
+  # ---- PostgreSQL + pgvector (v2 only) --------------------------------------
+  # Holds the knowledge base, its vector index, the extraction audit trail and
+  # the result cache. v1 does not use it at all: to run v1 without this service,
+  # start the app with SPRING_PROFILES_ACTIVE=lite.
+  postgres:
+    image: ${POSTGRES_IMAGE:-pgvector/pgvector:pg17}
+    container_name: ocr-postgres
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-ocr}
+      POSTGRES_USER: ${POSTGRES_USER:-ocr}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ocr}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks: [ocr]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-ocr} -d $${POSTGRES_DB:-ocr}"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    restart: unless-stopped
+
   ocr-app:
+    depends_on:
+      postgres:
+        condition: service_healthy
     build:
       context: ..
       dockerfile: Dockerfile
@@ -112,7 +138,53 @@ services:
       CALLBACK_AUTH_CLIENT_SECRET: ${CALLBACK_AUTH_CLIENT_SECRET:-}
       CALLBACK_AUTH_SCOPE: ${CALLBACK_AUTH_SCOPE:-}
       JAVA_OPTS: ${JAVA_OPTS:--XX:MaxRAMPercentage=75.0}
+
+      # --- v2: database ---------------------------------------------------
+      SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-}
+      POSTGRES_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-ocr}
+      POSTGRES_USER: ${POSTGRES_USER:-ocr}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ocr}
+
+      # --- v2: knowledge base ---------------------------------------------
+      AI_DEFAULT_PROVIDER: ${AI_DEFAULT_PROVIDER:-ollama}
+      AI_EMBEDDING_MODEL: ${AI_EMBEDDING_MODEL:-nomic-embed-text}
+      AI_EMBEDDING_DIMENSIONS: ${AI_EMBEDDING_DIMENSIONS:-768}
+      AI_RAG_ENABLED: ${AI_RAG_ENABLED:-true}
+
+      # --- v2: optional cloud providers (blank = disabled) ------------------
+      AI_OPENAI_ENABLED: ${AI_OPENAI_ENABLED:-false}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4.1}
+      AI_ANTHROPIC_ENABLED: ${AI_ANTHROPIC_ENABLED:-false}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-claude-sonnet-4-5}
+      AI_AZURE_ENABLED: ${AI_AZURE_ENABLED:-false}
+      AZURE_OPENAI_ENDPOINT: ${AZURE_OPENAI_ENDPOINT:-}
+      AZURE_OPENAI_API_KEY: ${AZURE_OPENAI_API_KEY:-}
+      AZURE_OPENAI_DEPLOYMENT: ${AZURE_OPENAI_DEPLOYMENT:-}
+      AI_VERTEX_ENABLED: ${AI_VERTEX_ENABLED:-false}
+      VERTEX_PROJECT_ID: ${VERTEX_PROJECT_ID:-}
+      VERTEX_LOCATION: ${VERTEX_LOCATION:-us-central1}
+      VERTEX_MODEL: ${VERTEX_MODEL:-gemini-2.5-pro}
+      GOOGLE_APPLICATION_CREDENTIALS: ${GOOGLE_APPLICATION_CREDENTIALS:-}
+      AI_BEDROCK_ENABLED: ${AI_BEDROCK_ENABLED:-false}
+      AWS_REGION: ${AWS_REGION:-us-east-1}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      BEDROCK_MODEL: ${BEDROCK_MODEL:-}
+      AI_GROQ_ENABLED: ${AI_GROQ_ENABLED:-false}
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      AI_DEEPSEEK_ENABLED: ${AI_DEEPSEEK_ENABLED:-false}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      AI_MISTRAL_ENABLED: ${AI_MISTRAL_ENABLED:-false}
+      MISTRAL_API_KEY: ${MISTRAL_API_KEY:-}
     networks: [ocr]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/api/v2/pi-extraction/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
     restart: unless-stopped
 
 networks:
@@ -121,3 +193,4 @@ networks:
 
 volumes:
   ollama_data:
+  postgres_data:

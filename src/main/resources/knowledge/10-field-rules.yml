@@ -1,0 +1,237 @@
+# =============================================================================
+# Business rules for reading a Proforma Invoice.
+#
+# These were previously one 60-line prompt string in application.yml. As separate
+# entries each rule can be edited, disabled, or added at runtime through
+# /api/v2/knowledge without a redeploy.
+#
+# alwaysInclude: true  -> injected on EVERY extraction, regardless of similarity.
+#                         Correctness rules for financial fields belong here: a rule
+#                         that only fires when retrieval happens to rank it highly is
+#                         a rule that silently stops applying.
+# alwaysInclude: false -> injected only when the document's signature matches.
+# =============================================================================
+
+- key: field-rule.grounding
+  type: FIELD_RULE
+  title: Every value must come from the document in front of you
+  tags: [grounding, correctness, mandatory]
+  alwaysInclude: true
+  body: |
+    This is financial data. Accuracy outranks completeness.
+
+    - Every value you return must be readable in the attached document. If a field is
+      not visible, return null. Never infer, never estimate, never carry a value over
+      from a similar invoice you have seen before.
+    - The hints supplied with this request describe HOW and WHERE to read. They are
+      never a source of values. If a hint contradicts the document, the document wins.
+    - Never copy a number, name, date or reference out of an example. Example values
+      are masked placeholders and are always wrong for the document at hand.
+    - Preserve original wording for addresses, payment terms, shipment terms, remarks,
+      clauses, document rules, references, currencies, units, HS codes and goods
+      descriptions. Do not translate, tidy or summarise them.
+    - Read by meaning, not by position. Layouts vary: tables, free text, letters,
+      stamps, handwriting, any language or template.
+
+- key: field-rule.output-contract
+  type: FIELD_RULE
+  title: Output contract - JSON only
+  tags: [output, format, mandatory]
+  alwaysInclude: true
+  body: |
+    Return ONLY valid JSON matching the target schema. No markdown fences, no comments,
+    no explanation before or after. Emit every schema key even when its value is null.
+
+- key: field-rule.document-scope
+  type: FIELD_RULE
+  title: Analyse the whole document as one ordered set
+  tags: [scope, multi-page, mandatory]
+  alwaysInclude: true
+  body: |
+    The attached images are one document in page order. Analyse them together, not page
+    by page. A single invoice's item table often continues across pages, and header
+    fields (bank, payment terms, HS code) frequently appear on a different page from the
+    items they apply to.
+
+    Decide how many Proforma Invoices the document contains before extracting: a new
+    invoice number plus a new party block signals a new PI; a continued table with the
+    same invoice number does not.
+
+- key: field-rule.parties
+  type: FIELD_RULE
+  title: Applicant vs beneficiary
+  fieldName: applicant_name
+  tags: [parties, applicant, beneficiary, buyer, seller]
+  alwaysInclude: true
+  body: |
+    - applicant_name / applicant_addr: the buyer, importer, applicant, "bill to",
+      "sold to", "messrs", or the party the goods are invoiced TO.
+    - beneficiary_name / beneficiary_addr: the seller, exporter, beneficiary, supplier,
+      shipper, or the party issuing the invoice - normally the letterhead owner.
+
+    If only one party block is visible, fill the one you can identify and leave the
+    other null. Do not guess which side an unlabelled address belongs to.
+
+- key: field-rule.bank-and-swift
+  type: FIELD_RULE
+  title: Bank name and SWIFT
+  fieldName: bank_name
+  tags: [bank, swift, bic, banking-details]
+  body: |
+    - bank_name: the most relevant beneficiary / advising / collecting bank, including
+      the branch when printed. Bank details usually sit under a "Bank Details",
+      "Banking Information" or "Remittance" heading, often near the footer.
+    - swift: the SWIFT or BIC code exactly as printed (8 or 11 characters).
+
+    When several banks appear (e.g. beneficiary bank plus its correspondent), put the
+    beneficiary's bank in bank_name and list all of them with their roles inside
+    content.banks.
+
+- key: field-rule.numeric-amounts
+  type: FIELD_RULE
+  title: Amounts are JSON numbers
+  fieldName: total_amount
+  tags: [amounts, numbers, formatting, mandatory]
+  alwaysInclude: true
+  body: |
+    unit_price, total_amount and any monetary value must be JSON numbers with no
+    currency symbol and no thousands separator.
+
+    Correct:   1958.07
+    Incorrect: "$ 1,958.07", "USD 1958.07", "1 958,07"
+
+    Read the digits exactly as printed. Do not round, do not recompute a printed total,
+    and do not "fix" a total that disagrees with the line items - report both as
+    printed. A mismatch is a real signal for the reviewer and is checked automatically
+    after extraction.
+
+- key: field-rule.item-row-binding
+  type: FIELD_RULE
+  title: Bind each item row to its own quantity, unit, price and total
+  tags: [items, table, quantity, unit-price, binding]
+  alwaysInclude: true
+  body: |
+    Use the table headers and business context - not column position alone - to bind
+    each product row to its quantity, quantity_unit, unit price and line total.
+
+    - quantity_unit is the printed unit: PCS, DZN, KG, YDS, SET, CTN, MTR...
+    - When a table repeats its header on a later page, keep the same binding.
+    - When one product spans two visual rows (description wrapped), emit ONE item.
+    - style_no is the buyer's style / article / item code; description is the goods
+      description. If only one of them is printed, fill it and leave the other null.
+
+- key: field-rule.summary-rows
+  type: FIELD_RULE
+  title: Never emit summary or total rows as items
+  tags: [items, totals, summary-row, mandatory]
+  alwaysInclude: true
+  body: |
+    DEFN_PROFORMA_INVOICE_HSC contains product rows only.
+
+    If a table row carries only a total quantity or total amount and has no product,
+    style or description, do NOT emit it as an item. Put its amount in
+    DEFN_PROFORMA_INVOICE.total_amount instead.
+
+    Rows labelled "Total", "Grand Total", "Sub Total", "Net Total", "Amount in words"
+    are summary rows, not products.
+
+- key: field-rule.hs-code-propagation
+  type: FIELD_RULE
+  title: Every item row must carry an HS code when the document states one
+  fieldName: hs_code
+  tags: [hs-code, customs, items, mandatory]
+  alwaysInclude: true
+  body: |
+    HS codes are frequently printed once for the whole invoice rather than per row -
+    commonly in a terms block, a footnote, or next to the goods description
+    (e.g. "HS CODE: 4819.10.00").
+
+    - If a row shows its own HS code, use that.
+    - Otherwise, if the invoice states ONE common HS code anywhere, copy that exact
+      code into every item row.
+    - Copy the code exactly as printed, including its dots. Do not reformat, pad or
+      truncate it.
+    - Only treat a number as an HS code when it is labelled as one or sits in an HS
+      code column. A bare decimal like 5945.44 in an amount column is money, not a
+      tariff code.
+
+- key: field-rule.currency-evidence
+  type: FIELD_RULE
+  title: Currency is mandatory when any evidence exists
+  fieldName: currency
+  tags: [currency, iso-code, mandatory]
+  alwaysInclude: true
+  body: |
+    Determine currency from any of, in order of reliability:
+      1. an explicit currency field or ISO code;
+      2. the amount column header - "US $", "USD", "Amount (EUR)";
+      3. currency symbols next to amounts - $, €, £;
+      4. amount-in-words or payment text - "U.S. DOLLAR" -> USD.
+
+    Return the ISO 4217 code ("USD", "EUR", "GBP", "BDT", "CNY"...). Note that "$"
+    alone is ambiguous - prefer a nearby qualifier (US$, S$, A$, CAD$) when present.
+
+    Return null only when there is no currency evidence anywhere in the document.
+
+- key: field-rule.draft-at-days
+  type: FIELD_RULE
+  title: draft_at_days is a number of days, read from the tenor
+  fieldName: draft_at_days
+  tags: [payment-terms, tenor, draft, usance]
+  body: |
+    draft_at_days is the numeric tenor in days taken from the LC or payment term.
+
+    "at 120 days sight"            -> 120
+    "usance 90 days from B/L date" -> 90
+    "at sight" / "sight draft"     -> 0
+    no tenor stated                -> null
+
+    Keep the full original wording in payment_terms regardless.
+
+- key: field-rule.shipment-and-partial
+  type: FIELD_RULE
+  title: Shipment validity and partial shipment
+  fieldName: partial_shipment
+  tags: [shipment, partial-shipment, transshipment, validity]
+  body: |
+    - shipment_validity: the shipment period or latest shipment date, in the document's
+      own words ("Shipment on or before 30-Nov-2025", "within 60 days of order").
+    - partial_shipment: what the document says - typically "Allowed", "Not Allowed",
+      "Permitted", "Prohibited". Keep transshipment wording separate, inside
+      content.transshipment.
+
+    If partial shipment is only implied by the shipment clause, record it as printed
+    rather than normalising it yourself.
+
+- key: field-rule.dates
+  type: FIELD_RULE
+  title: Dates - normalise only when unambiguous
+  fieldName: pi_date
+  tags: [dates, formatting]
+  alwaysInclude: true
+  body: |
+    Normalise a date to YYYY-MM-DD only when its meaning is unambiguous - for example
+    when the month is spelled out (15-Mar-2025 -> 2025-03-15) or the day exceeds 12.
+
+    When a purely numeric date could be read either way (03/04/2025), preserve the
+    visible string exactly as printed. Guessing the order of a financial date is worse
+    than leaving it un-normalised.
+
+- key: field-rule.content-catch-all
+  type: FIELD_RULE
+  title: content holds everything else, as a JSON object
+  fieldName: content
+  tags: [content, extras, trade-terms]
+  alwaysInclude: true
+  body: |
+    DEFN_PROFORMA_INVOICE.content is a JSON OBJECT (not a string) holding every other
+    useful thing you extracted. Use null when there is nothing extra.
+
+    Put here: additional banks with their roles; incoterms and named place; ports of
+    loading/discharge; shipment mode; transshipment wording; country of origin and
+    destination; LC / export LC references; document rules and clauses; all dates; all
+    references; contacts and signatures; amount in words; subtotal, tax, freight and
+    discount lines; package / carton / CBM / gross and net weights; raw table captures
+    that did not fit the item schema; and any other trade-initiation field.
+
+    Prefer descriptive snake_case keys. Keep original wording inside the values.

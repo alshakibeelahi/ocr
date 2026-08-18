@@ -1,0 +1,92 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ocr.local/schema/proforma-invoice.schema.json",
+  "title": "PI extraction output",
+  "description": "Structural contract for v2 extraction output. Validates shape and types only - every field is nullable, because 'not visible in the document' is a legitimate and expected answer.",
+  "oneOf": [
+    { "$ref": "#/$defs/singleInvoice" },
+    { "$ref": "#/$defs/multipleInvoices" }
+  ],
+  "$defs": {
+    "singleInvoice": {
+      "type": "object",
+      "required": ["DEFN_PROFORMA_INVOICE", "DEFN_PROFORMA_INVOICE_HSC"],
+      "properties": {
+        "DEFN_PROFORMA_INVOICE": { "$ref": "#/$defs/header" },
+        "DEFN_PROFORMA_INVOICE_HSC": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/item" }
+        }
+      },
+      "additionalProperties": true
+    },
+    "multipleInvoices": {
+      "type": "object",
+      "required": ["PROFORMA_INVOICES"],
+      "properties": {
+        "PROFORMA_INVOICES": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["unique_id", "DEFN_PROFORMA_INVOICE", "DEFN_PROFORMA_INVOICE_HSC"],
+            "properties": {
+              "unique_id": { "type": "string" },
+              "DEFN_PROFORMA_INVOICE": { "$ref": "#/$defs/header" },
+              "DEFN_PROFORMA_INVOICE_HSC": {
+                "type": "array",
+                "items": { "$ref": "#/$defs/item" }
+              }
+            },
+            "additionalProperties": true
+          }
+        }
+      },
+      "additionalProperties": true
+    },
+    "nullableString": { "type": ["string", "null"] },
+    "nullableNumber": { "type": ["number", "null"] },
+    "nullableStringOrNumber": { "type": ["string", "number", "null"] },
+    "header": {
+      "type": "object",
+      "properties": {
+        "pi_no": { "$ref": "#/$defs/nullableStringOrNumber" },
+        "pi_date": { "$ref": "#/$defs/nullableString" },
+        "applicant_name": { "$ref": "#/$defs/nullableString" },
+        "applicant_addr": { "$ref": "#/$defs/nullableString" },
+        "beneficiary_name": { "$ref": "#/$defs/nullableString" },
+        "beneficiary_addr": { "$ref": "#/$defs/nullableString" },
+        "bank_name": { "$ref": "#/$defs/nullableString" },
+        "swift": { "$ref": "#/$defs/nullableString" },
+        "currency": { "$ref": "#/$defs/nullableString" },
+        "payment_terms": { "$ref": "#/$defs/nullableString" },
+        "partial_shipment": { "$ref": "#/$defs/nullableString" },
+        "shipment_validity": { "$ref": "#/$defs/nullableString" },
+        "draft_at_days": { "$ref": "#/$defs/nullableStringOrNumber" },
+        "delivery_date": { "$ref": "#/$defs/nullableString" },
+        "delivery_address": { "$ref": "#/$defs/nullableString" },
+        "pi_validity_days": { "$ref": "#/$defs/nullableStringOrNumber" },
+        "total_amount": { "$ref": "#/$defs/nullableNumber" },
+        "status": { "$ref": "#/$defs/nullableString" },
+        "remarks": { "$ref": "#/$defs/nullableString" },
+        "content": { "type": ["object", "null"] }
+      },
+      "additionalProperties": true
+    },
+    "item": {
+      "type": "object",
+      "properties": {
+        "sl_no": { "$ref": "#/$defs/nullableStringOrNumber" },
+        "style_no": { "$ref": "#/$defs/nullableStringOrNumber" },
+        "description": { "$ref": "#/$defs/nullableString" },
+        "quantity": { "$ref": "#/$defs/nullableStringOrNumber" },
+        "quantity_unit": { "$ref": "#/$defs/nullableString" },
+        "net_weight": { "$ref": "#/$defs/nullableStringOrNumber" },
+        "unit_price": { "$ref": "#/$defs/nullableNumber" },
+        "total_amount": { "$ref": "#/$defs/nullableNumber" },
+        "hs_code": { "$ref": "#/$defs/nullableStringOrNumber" }
+      },
+      "additionalProperties": true
+    }
+  }
+}

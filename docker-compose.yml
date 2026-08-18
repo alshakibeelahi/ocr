@@ -38,10 +38,33 @@ services:
     environment:
       OLLAMA_HOST: http://ollama:11434
       OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2.5vl:3b}
+      AI_EMBEDDING_MODEL: ${AI_EMBEDDING_MODEL:-nomic-embed-text}
     entrypoint: ["/bin/sh", "-c"]
     command:
-      - 'if ollama list | grep -q "$$OLLAMA_MODEL"; then echo "Model already present."; else echo "Pulling model: $$OLLAMA_MODEL" && ollama pull "$$OLLAMA_MODEL"; fi && ollama list'
+      - 'for m in "$$OLLAMA_MODEL" "$$AI_EMBEDDING_MODEL"; do if ollama list | grep -q "$$m"; then echo "Model already present: $$m"; else echo "Pulling model: $$m" && ollama pull "$$m"; fi; done && ollama list'
     restart: "no"
+
+  # PostgreSQL + pgvector for the v2 knowledge base, audit trail and cache.
+  # v1 does not use it; run the app with --spring.profiles.active=lite to skip it.
+  postgres:
+    image: pgvector/pgvector:pg17
+    container_name: ocr-postgres
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-ocr}
+      POSTGRES_USER: ${POSTGRES_USER:-ocr}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ocr}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-ocr} -d $${POSTGRES_DB:-ocr}"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    restart: unless-stopped
 
 volumes:
   ollama_data:
+  postgres_data:

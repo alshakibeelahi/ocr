@@ -1,28 +1,50 @@
-# OCR / PI Data Extraction (Ollama Vision)
+# OCR / PI Data Extraction
 
 Spring Boot (Java 21) service that turns Proforma Invoice PDFs/images into
-structured trade-finance JSON using a local Ollama vision model
-(`qwen2.5vl:3b` by default).
+structured trade-finance JSON using a vision model.
 
-- **Job-based**: `POST /api/v1/pi-data-extraction/jobs` returns `202 { jobId }`
+Two APIs, side by side:
+
+### v1 — job based, Ollama (unchanged)
+
+- **Submit**: `POST /api/v1/pi-data-extraction/jobs` returns `202 { jobId }`
   immediately; extraction runs in the background and the result is POSTed to
   your `callbackUrl` (OAuth client-credentials Bearer token).
 - **Poll**: `GET /api/v1/pi-data-extraction/jobs/{jobId}` for status/result.
 - **UI**: `/pi-data-extraction.html` (upload + poll + summary + raw overview),
   `/` (plain per-page OCR).
 
+### v2 — synchronous, Spring AI, RAG-grounded → **[docs/SETUP.md](docs/SETUP.md)**
+
+- **One request, one answer**: `POST /api/v2/pi-extraction/extract` (blocking, no
+  timeout) or `POST /api/v2/pi-extraction/extract/stream` (SSE, chat-style).
+- **Any vendor**: Ollama (default, local), OpenAI, Anthropic, Azure OpenAI,
+  Vertex Gemini, Bedrock, Groq, DeepSeek, Mistral — selected per request.
+- **Knowledge base instead of one giant prompt**: extraction rules and supplier
+  layout patterns live in PostgreSQL/pgvector and are editable at runtime via
+  `/api/v2/knowledge`, so only the rules relevant to *this* document are sent.
+- **Verified output**: every extraction is checked against the document's own
+  text layer plus schema and arithmetic, and reports what could not be verified.
+  Nothing is silently corrected.
+
+`extraction` in the v2 response is byte-for-byte the shape v1 returns, so moving
+a consumer over is a URL change.
+
 ## Quick start (local dev)
 
 ```powershell
-# 1. Start Ollama (CPU) and pull the model
+# 1. Start Ollama + PostgreSQL/pgvector, and pull the models
 docker compose up -d
-docker logs -f ocr-ollama-init          # wait for the model download
+docker logs -f ocr-ollama-init          # wait for the model downloads
 
 # 2. Run the app
 mvn spring-boot:run -s .mvn/settings.xml
 
-# 3. Open http://localhost:8080/pi-data-extraction.html
+# 3a. v1 UI:  http://localhost:8080/pi-data-extraction.html
+# 3b. v2 API: curl -N -X POST http://localhost:8080/api/v2/pi-extraction/extract/stream -F "file=@invoice.pdf"
 ```
+
+Running v1 only, without PostgreSQL: start with `SPRING_PROFILES_ACTIVE=lite`.
 
 ## Configuration (env vars)
 
@@ -37,6 +59,9 @@ The app reads everything from environment variables (defaults in
 | `OLLAMA_KEEP_ALIVE` | `30m` | Keep model loaded between jobs |
 | `OCR_MAX_IMAGE_DIMENSION` | `1536` | Lower = fewer vision tokens = faster |
 | `CALLBACK_AUTH_*` | — | Keycloak token URL / client id / secret for callback delivery |
+
+v2 adds `AI_*` and `POSTGRES_*` variables — see the
+[configuration reference](docs/SETUP.md#9-configuration-reference).
 
 ## Offline deployment (export tar, run on any server)
 

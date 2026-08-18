@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PI Extraction v2 - Spring AI</title>
+    <link rel="icon" href="data:,">
+    <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+    <main class="container container-wide">
+        <header>
+            <h1>PI Extraction <span class="version-chip">v2</span></h1>
+            <p class="subtitle">
+                Synchronous, RAG-grounded extraction. Upload a document and watch it being read -
+                no job, no callback. Every value is checked against the document's own text.
+            </p>
+            <nav class="app-nav" aria-label="Document tools">
+                <a href="/">OCR</a>
+                <a href="/pi-data-extraction.html">PI Data Extraction (v1)</a>
+                <a class="active" href="/pi-extraction-v2.html">PI Extraction (v2)</a>
+            </nav>
+        </header>
+
+        <!-- Readiness ------------------------------------------------------>
+        <section id="healthSection" class="health-section hidden">
+            <div class="health-head">
+                <span id="healthChip" class="chip">checking</span>
+                <span id="healthSummary" class="muted"></span>
+                <button type="button" id="refreshHealthBtn" class="ghost-btn">Refresh</button>
+            </div>
+            <p id="healthDetail" class="muted small hidden"></p>
+        </section>
+
+        <!-- Upload --------------------------------------------------------->
+        <section class="upload-section">
+            <form id="uploadForm">
+                <label class="file-label" for="pdfFile">
+                    <span id="fileLabel">Choose PI PDF or image</span>
+                    <input type="file" id="pdfFile" accept="application/pdf,image/png,image/jpeg" required>
+                </label>
+
+                <div class="control-row">
+                    <label class="select-label">
+                        <span>Provider</span>
+                        <select id="providerSelect">
+                            <option value="">Default</option>
+                        </select>
+                    </label>
+                    <label class="select-label">
+                        <span>Model</span>
+                        <input type="text" id="modelInput" placeholder="provider default">
+                    </label>
+                </div>
+
+                <div class="toggle-row">
+                    <label class="toggle" title="Inject retrieved rules and layout patterns. Off runs with mandatory rules only.">
+                        <input type="checkbox" id="useRag" checked>
+                        <span>Use knowledge base</span>
+                    </label>
+                    <label class="toggle" title="Feed the PDF's own text layer to the model alongside the images.">
+                        <input type="checkbox" id="includeTextLayer" checked>
+                        <span>Use text layer</span>
+                    </label>
+                    <label class="toggle" title="Return a stored result when the identical file was already extracted under identical settings.">
+                        <input type="checkbox" id="useCache" checked>
+                        <span>Allow cache</span>
+                    </label>
+                    <label class="toggle" title="Stream the model's output token by token.">
+                        <input type="checkbox" id="streamDeltas" checked>
+                        <span>Stream output</span>
+                    </label>
+                </div>
+
+                <div class="button-row">
+                    <button type="submit" id="submitBtn">Extract</button>
+                    <button type="button" id="cancelBtn" class="secondary-btn hidden">Cancel</button>
+                </div>
+            </form>
+        </section>
+
+        <!-- Live progress -------------------------------------------------->
+        <section id="progressSection" class="status-section hidden">
+            <div class="progress-bar">
+                <div id="progressFill" class="progress-fill"></div>
+            </div>
+            <p id="statusText" class="status-text">Waiting...</p>
+
+            <ol id="stageList" class="stage-list"></ol>
+
+            <details id="streamDetails" class="stream-details hidden">
+                <summary>Model output as it arrives</summary>
+                <pre id="streamOutput" class="stream-output"></pre>
+            </details>
+        </section>
+
+        <!-- Results -------------------------------------------------------->
+        <section id="resultsSection" class="results-section hidden">
+            <div class="results-header">
+                <h2>Extracted Data</h2>
+                <div class="button-row">
+                    <button id="downloadBtn" class="secondary-btn">Download JSON</button>
+                </div>
+            </div>
+
+            <div id="runMeta" class="run-meta"></div>
+            <div id="verificationPanel"></div>
+            <div id="invoicesContainer"></div>
+            <div id="knowledgeUsedPanel"></div>
+
+            <div class="page-card">
+                <h3>Raw response</h3>
+                <p class="muted small">The full envelope exactly as the API returned it.</p>
+                <pre id="rawJson" class="page-text"></pre>
+            </div>
+        </section>
+
+        <section id="errorSection" class="error-section hidden">
+            <p id="errorText"></p>
+        </section>
+
+        <!-- Knowledge base ------------------------------------------------->
+        <section class="knowledge-section">
+            <details id="knowledgeDetails">
+                <summary>
+                    Knowledge base
+                    <span id="knowledgeCount" class="muted small"></span>
+                </summary>
+
+                <p class="muted small">
+                    The rules the extractor reads with. Edits take effect on the next request - no
+                    redeploy. Entries marked <em>always</em> are injected on every document;
+                    the rest only when the document resembles what they describe.
+                </p>
+
+                <div class="knowledge-controls">
+                    <input type="search" id="knowledgeSearch"
+                           placeholder="Try a document's header text to see what it would retrieve...">
+                    <select id="knowledgeTypeFilter">
+                        <option value="">All types</option>
+                        <option value="SCHEMA">Schema</option>
+                        <option value="FIELD_RULE">Field rules</option>
+                        <option value="LAYOUT_PATTERN">Layout patterns</option>
+                        <option value="EXAMPLE">Examples</option>
+                    </select>
+                    <button type="button" id="knowledgeSearchBtn" class="secondary-btn">Test retrieval</button>
+                    <button type="button" id="knowledgeListBtn" class="ghost-btn">Show all</button>
+                    <button type="button" id="reindexBtn" class="ghost-btn">Reindex</button>
+                </div>
+
+                <div id="knowledgeList" class="knowledge-list"></div>
+            </details>
+        </section>
+    </main>
+    <script src="/pi-extraction-v2.js"></script>
+</body>
+</html>
