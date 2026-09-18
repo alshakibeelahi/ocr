@@ -14,6 +14,8 @@ public class OcrJob {
     private JobStatus status;
     private int totalPages;
     private final List<OcrPage> pages;
+    /** Non-fatal quality notes about the extraction, e.g. output that had to be truncated. */
+    private final List<String> warnings;
     private String errorMessage;
 
     public OcrJob(JobId jobId, String fileName) {
@@ -22,6 +24,7 @@ public class OcrJob {
         this.createdAt = Instant.now();
         this.status = JobStatus.PENDING;
         this.pages = new ArrayList<>();
+        this.warnings = new ArrayList<>();
     }
 
     public JobId getJobId() {
@@ -50,6 +53,17 @@ public class OcrJob {
 
     public String getErrorMessage() {
         return errorMessage;
+    }
+
+    public List<String> getWarnings() {
+        return Collections.unmodifiableList(warnings);
+    }
+
+    /** Records a quality note. A job with warnings still completes; the result is just less trusted. */
+    public void addWarning(String warning) {
+        if (warning != null && !warning.isBlank() && !warnings.contains(warning)) {
+            warnings.add(warning);
+        }
     }
 
     public void initializePages(int totalPages) {

@@ -18,6 +18,12 @@ ollama:
   keep-alive: ${OLLAMA_KEEP_ALIVE:30m}
   num-ctx: ${OLLAMA_NUM_CTX:8192}
   max-prompt-chars: 6500
+  # Safety limits, not tuning. temperature 0 keeps extraction reproducible but also makes a
+  # repetition loop self-sustaining, so the penalty is what actually ends one; num-predict bounds
+  # the cost if it does not. A full one-page extraction is ~800-1500 tokens.
+  num-predict: ${OLLAMA_NUM_PREDICT:2048}
+  repeat-penalty: ${OLLAMA_REPEAT_PENALTY:1.1}
+  repeat-last-n: ${OLLAMA_REPEAT_LAST_N:320}
   ocr-prompt: >
     Extract all visible text from this document page.
     Return plain text only, preserve reading order.
@@ -78,8 +84,16 @@ ollama:
     data, content is null.
 
 ocr:
-  render-dpi: ${OCR_RENDER_DPI:200}
-  max-image-dimension: ${OCR_MAX_IMAGE_DIMENSION:1536}
+  # 150 DPI / 1024px is roughly half the vision-token cost of 200/1536 with little accuracy loss
+  # on printed invoices, and it is the difference between finishing inside the client's timeout
+  # and not on CPU.
+  render-dpi: ${OCR_RENDER_DPI:150}
+  max-image-dimension: ${OCR_MAX_IMAGE_DIMENSION:1024}
+  # Every page goes to the model in ONE chat request, so this must stay small enough that
+  # max-pages x per-page vision tokens fits inside ollama.num-ctx.
+  max-pages: ${OCR_MAX_PAGES:3}
+  # Load the model at boot so the first real extraction does not also pay the model load cost.
+  warmup-on-startup: ${OCR_WARMUP_ON_STARTUP:true}
 
 callback-auth:
   auth-required: ${CALLBACK_AUTH_REQUIRED:true}

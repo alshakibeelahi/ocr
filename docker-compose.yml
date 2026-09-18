@@ -20,14 +20,9 @@ services:
       retries: 12
       start_period: 30s
     restart: unless-stopped
-    # Uncomment for NVIDIA GPU support:
-    # deploy:
-    #   resources:
-    #     reservations:
-    #       devices:
-    #         - driver: nvidia
-    #           count: all
-    #           capabilities: [gpu]
+    # For NVIDIA GPU support (strongly recommended - CPU inference is 10-40 min/document and is
+    # the main cause of client timeouts) start the stack with the GPU override instead:
+    #   docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d
 
   ollama-init:
     image: ollama/ollama:latest

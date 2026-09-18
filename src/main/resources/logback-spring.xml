@@ -1,0 +1,92 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Logging for the OCR service.
+  Logs are written to both console and files. Async appenders prevent
+  logging from blocking the OCR extraction worker.
+-->
+<configuration>
+    <!-- Log directory -->
+    <property name="LOG_PATH" value="${LOG_PATH:-logs}"/>
+    <!-- Common log pattern -->
+    <property name="PATTERN"
+              value="%d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n"/>
+    <!-- =========================================================
+         CONSOLE APPENDER
+         ========================================================= -->
+    <appender name="CONSOLE"
+              class="ch.qos.logback.core.ConsoleAppender">
+        <encoder>
+            <pattern>${PATTERN}</pattern>
+        </encoder>
+    </appender>
+
+    <!-- =========================================================
+         FILE APPENDER
+         ========================================================= -->
+    <appender name="FILE"
+              class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <!-- Current log file -->
+        <file>${LOG_PATH}/ocr.log</file>
+        <!--
+          Size + time based rolling policy.
+          %d = date
+          %i = rolling index
+          Example:
+          ocr-2026-09-18.0.log
+          ocr-2026-09-18.1.log
+          ocr-2026-09-18.2.log
+        -->
+        <rollingPolicy
+                class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+            <fileNamePattern>
+                ${LOG_PATH}/ocr-%d{yyyy-MM-dd}.%i.log
+            </fileNamePattern>
+            <!-- Maximum size of each log file -->
+            <maxFileSize>20MB</maxFileSize>
+            <!-- Keep logs for 7 days -->
+            <maxHistory>7</maxHistory>
+            <!-- Maximum total size of archived logs -->
+            <totalSizeCap>500MB</totalSizeCap>
+        </rollingPolicy>
+        <encoder>
+            <pattern>${PATTERN}</pattern>
+        </encoder>
+    </appender>
+
+    <!-- =========================================================
+         ASYNC CONSOLE
+         ========================================================= -->
+    <appender name="ASYNC_CONSOLE"
+              class="ch.qos.logback.classic.AsyncAppender">
+        <appender-ref ref="CONSOLE"/>
+        <queueSize>1024</queueSize>
+        <!-- Do not discard messages based on threshold -->
+        <discardingThreshold>0</discardingThreshold>
+        <!-- Never block OCR worker threads -->
+        <neverBlock>true</neverBlock>
+    </appender>
+
+    <!-- =========================================================
+         ASYNC FILE
+         ========================================================= -->
+    <appender name="ASYNC_FILE"
+              class="ch.qos.logback.classic.AsyncAppender">
+        <appender-ref ref="FILE"/>
+        <queueSize>1024</queueSize>
+        <!-- Do not discard messages based on threshold -->
+        <discardingThreshold>0</discardingThreshold>
+        <!-- Never block OCR worker threads -->
+        <neverBlock>true</neverBlock>
+    </appender>
+    <!-- =========================================================
+         APPLICATION LOGGER
+         ========================================================= -->
+    <logger name="com.ocr" level="INFO"/>
+    <!-- =========================================================
+         ROOT LOGGER
+         ========================================================= -->
+    <root level="INFO">
+        <appender-ref ref="ASYNC_CONSOLE"/>
+        <appender-ref ref="ASYNC_FILE"/>
+    </root>
+</configuration>

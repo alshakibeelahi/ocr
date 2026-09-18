@@ -38,3 +38,4 @@ scripts/dist/
 
 ### Local deployment config (contains secrets) ###
 deploy/.env
+logs/

@@ -57,10 +57,16 @@ public class OllamaVisionClient implements OllamaVisionPort {
         if (jsonMode) {
             body.put("format", "json");
         }
-        body.put("options", Map.of(
-                "num_ctx", properties.numCtx(),
-                "temperature", 0
-        ));
+        Map<String, Object> options = new LinkedHashMap<>();
+        options.put("num_ctx", properties.numCtx());
+        // Greedy decoding keeps extraction reproducible, but on its own it also makes a repetition
+        // loop permanent: the repeated phrase stays the most likely continuation of itself. The
+        // penalty breaks that, and num_predict bounds the cost when it does not.
+        options.put("temperature", 0);
+        options.put("num_predict", properties.numPredict());
+        options.put("repeat_penalty", properties.repeatPenalty());
+        options.put("repeat_last_n", properties.repeatLastN());
+        body.put("options", options);
         body.put("messages", List.of(Map.of(
                 "role", "user",
                 "content", promptWithinLimit,

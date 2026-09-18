@@ -16,6 +16,7 @@ public record OcrJobResponse(
         int totalPages,
         Instant createdAt,
         String errorMessage,
+        List<String> warnings,
         List<PageResultDto> pages
 ) {
 
@@ -30,6 +31,7 @@ public record OcrJobResponse(
                 job.getTotalPages(),
                 job.getCreatedAt(),
                 job.getErrorMessage(),
+                job.getWarnings(),
                 pages
         );
     }

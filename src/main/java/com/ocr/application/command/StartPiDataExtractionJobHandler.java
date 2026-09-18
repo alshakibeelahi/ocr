@@ -16,6 +16,8 @@ import com.ocr.domain.model.OcrPage;
 import com.ocr.domain.model.PageMetadata;
 import com.ocr.domain.repository.OcrJobRepository;
 import com.ocr.domain.service.ImagePreprocessor;
+import com.ocr.domain.service.JsonSalvage;
+import com.ocr.domain.service.RepetitionGuard;
 import com.ocr.domain.service.PdfPageExtractor;
 import com.ocr.interfaces.config.OcrProperties;
 import com.ocr.interfaces.config.OllamaProperties;
@@ -31,8 +33,12 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Base64;
+import java.util.Iterator;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.Executor;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -43,8 +49,11 @@ public class StartPiDataExtractionJobHandler {
     private static final Logger log = LoggerFactory.getLogger(StartPiDataExtractionJobHandler.class);
     // Accepts partial codes the model reads from scans, e.g. 4819.1, 4819.10, 4819.10.00.
     private static final Pattern HS_CODE_PATTERN = Pattern.compile("\\b\\d{4}(?:\\.\\d{1,2}){1,2}\\b");
-    private static final Pattern LABELLED_HS_CODE_PATTERN =
-            Pattern.compile("(?i)\\bH\\.?S\\.?\\s*CODE\\s*[:\\-]?\\s*(\\d{4}(?:\\.\\d{1,4}){0,2})");
+    // Matches a code only when it follows an explicit HS-code label, in any of the spellings a
+    // scan produces: "HS CODE:", "H.S. CODE -", "HSCODE", "HS Code No. #".
+    private static final Pattern LABELLED_HS_CODE_PATTERN = Pattern.compile(
+            "(?i)\\bH\\.?\\s*S\\.?\\s*CODE[Ss]?\\s*(?:NO\\.?|#)?\\s*[:\\-]?\\s*"
+                    + "(\\d{4}(?:\\s*\\.\\s*\\d{1,4}){0,2})");
     private static final Pattern DRAFT_DAYS_PATTERN = Pattern.compile("(?i)\\b(?:at\\s*)?(\\d{1,3})\\s*days?\\s+sight\\b");
     private static final Pattern USD_HINT_PATTERN = Pattern.compile("(?i)\\bU\\.?S\\.?\\s*(?:\\$|DOLLAR)|\\bUSD\\b|\\bUS\\$");
     private static final Pattern EUR_HINT_PATTERN = Pattern.compile("(?i)\\bEURO?\\b|€");
@@ -177,8 +186,20 @@ public class StartPiDataExtractionJobHandler {
             int maxWidth = 0;
             int maxHeight = 0;
 
+            int pagesToAnalyze = Math.min(sourcePageCount, ocrProperties.maxPages());
+            if (pagesToAnalyze < sourcePageCount) {
+                log.warn(
+                        "Truncating document for PI extraction: jobId={}, sourcePages={}, analyzedPages={}, "
+                                + "reason=ocr.max-pages. Every page is sent in one vision request and would "
+                                + "otherwise overflow ollama.num-ctx.",
+                        jobId,
+                        sourcePageCount,
+                        pagesToAnalyze
+                );
+            }
+
             if (pdf) {
-                for (int pageIndex = 0; pageIndex < sourcePageCount; pageIndex++) {
+                for (int pageIndex = 0; pageIndex < pagesToAnalyze; pageIndex++) {
                     BufferedImage rendered = pdfPageExtractor.renderPage(
                             command.pdfBytes(),
                             pageIndex,
@@ -204,12 +225,48 @@ public class StartPiDataExtractionJobHandler {
 
             log.info("Invoking vision model for PI extraction: jobId={}, imageCount={}", jobId, base64Pages.size());
             // Job-based flow: accumulate the streamed tokens in memory; clients poll the job
-            // status instead of consuming per-token events.
-            ollamaVisionPort.streamVision(base64Pages, promptForDocument(sourcePageCount), true, page::appendText);
-            log.info("Vision model stream finished for PI extraction: jobId={}", jobId);
+            // status instead of consuming per-token events. The guard rides along so a model that
+            // starts repeating itself is stopped at the first repeat rather than at the timeout.
+            RepetitionGuard guard = new RepetitionGuard();
+            try {
+                ollamaVisionPort.streamVision(
+                        base64Pages,
+                        promptForDocument(base64Pages.size()),
+                        true,
+                        chunk -> {
+                            // Keep updating the page as tokens arrive: an in-flight job stays
+                            // inspectable, which is how a stall gets diagnosed at all.
+                            page.appendText(chunk);
+                            if (guard.append(chunk)) {
+                                throw new DegenerateOutputException();
+                            }
+                        }
+                );
+            } catch (DegenerateOutputException e) {
+                log.warn(
+                        "Vision model began repeating itself, stopping early: jobId={}, period={}, "
+                                + "keptChars={}, discardedChars={}",
+                        jobId,
+                        guard.period(),
+                        guard.loopStartIndex(),
+                        guard.text().length() - guard.loopStartIndex()
+                );
+                job.addWarning("The model repeated itself and generation was stopped early; "
+                        + "fields after that point are missing.");
+            }
+            log.info("Vision model stream finished for PI extraction: jobId={}, outputChars={}",
+                    jobId, guard.text().length());
+
+            String extracted = guard.textWithoutLoop();
+            String closed = JsonSalvage.close(extracted);
+            if (!closed.equals(extracted)) {
+                log.warn("Extraction JSON was incomplete and had to be closed: jobId={}", jobId);
+                job.addWarning("The extraction was cut short and its JSON had to be repaired; "
+                        + "some fields may be missing.");
+            }
+            page.replaceText(normalizeExtraction(closed));
 
             long durationMs = System.currentTimeMillis() - startMs;
-            page.replaceText(normalizeExtraction(page.getExtractedText()));
             PageMetadata metadata = new PageMetadata(
                     ocrProperties.renderDpi(),
                     true,
@@ -221,6 +278,7 @@ public class StartPiDataExtractionJobHandler {
             repository.save(job);
             Map<String, Object> eventMetadata = metadata.toMap();
             eventMetadata.put("sourcePageCount", sourcePageCount);
+            eventMetadata.put("analyzedPageCount", base64Pages.size());
             eventMetadata.put("analyzedAs", "single-document");
             log.info(
                     "PI extraction page completed: jobId={}, page={}, durationMs={}, width={}, height={}",
@@ -241,6 +299,13 @@ public class StartPiDataExtractionJobHandler {
             repository.save(job);
             eventPublisher.publish(StreamEvent.error(jobId.toString(), e.getMessage(), resultNum));
             throw e;
+        }
+    }
+
+    /** Unwinds the reactive stream when the guard trips. Never leaves this class. */
+    private static final class DegenerateOutputException extends RuntimeException {
+        DegenerateOutputException() {
+            super(null, null, false, false);
         }
     }
 
@@ -281,12 +346,34 @@ public class StartPiDataExtractionJobHandler {
                 normalizeMultipleInvoices(rootObject.withArray("PROFORMA_INVOICES"));
             } else {
                 normalizeInvoice(rootObject);
+                rootObject = wrapSingleInvoice(rootObject);
             }
 
             return objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(rootObject);
         } catch (Exception ignored) {
             return text;
         }
+    }
+
+    /**
+     * Lifts a single-invoice document into the same {@code PROFORMA_INVOICES} envelope the
+     * multi-invoice prompt produces. The model is told to return the bare
+     * {@code DEFN_PROFORMA_INVOICE}/{@code DEFN_PROFORMA_INVOICE_HSC} pair for a one-PI document,
+     * which left consumers with two different top-level shapes to handle; emitting one shape here
+     * means the callback contract never varies with the page content.
+     */
+    private ObjectNode wrapSingleInvoice(ObjectNode invoice) {
+        ObjectNode entry = objectMapper.createObjectNode();
+        entry.put("unique_id", "pi-1");
+        entry.set("DEFN_PROFORMA_INVOICE", objectNode(invoice, "DEFN_PROFORMA_INVOICE"));
+        entry.set("DEFN_PROFORMA_INVOICE_HSC", arrayNode(invoice, "DEFN_PROFORMA_INVOICE_HSC"));
+
+        ArrayNode invoices = objectMapper.createArrayNode();
+        invoices.add(entry);
+
+        ObjectNode wrapper = objectMapper.createObjectNode();
+        wrapper.set("PROFORMA_INVOICES", invoices);
+        return wrapper;
     }
 
     private void normalizeMultipleInvoices(ArrayNode invoices) {
@@ -300,11 +387,7 @@ public class StartPiDataExtractionJobHandler {
     private void normalizeInvoice(ObjectNode invoice) {
         ObjectNode header = objectNode(invoice, "DEFN_PROFORMA_INVOICE");
         ArrayNode items = arrayNode(invoice, "DEFN_PROFORMA_INVOICE_HSC");
-        String commonHsCode = findCommonHsCode(header);
-        if (commonHsCode == null) {
-            // Last resort: scan text labelled "HS CODE"/"H.S CODE" anywhere in the invoice.
-            commonHsCode = findLabelledHsCode(invoice.toString());
-        }
+        String commonHsCode = resolveCommonHsCode(invoice, header, items);
         JsonNode removedTotal = removeSummaryRowsAndNormalizeItems(items, commonHsCode);
 
         if (!header.has("total_amount") || header.get("total_amount").isNull()) {
@@ -387,10 +470,7 @@ public class StartPiDataExtractionJobHandler {
                 continue;
             }
 
-            if ((!item.has("hs_code") || item.get("hs_code").isNull() || item.get("hs_code").asText().isBlank())
-                    && commonHsCode != null) {
-                item.put("hs_code", commonHsCode);
-            }
+            normalizeHsCode(item, commonHsCode);
             item.put("sl_no", slNo++);
             kept.add(item);
         }
@@ -409,47 +489,127 @@ public class StartPiDataExtractionJobHandler {
         return label.contains("total") || (hasNoProductIdentity && item.has("total_amount"));
     }
 
-    private String findCommonHsCode(ObjectNode header) {
-        // Dedicated fields first (exact values, no false positives from amounts).
-        String fromField = hsCodeFromFields(header);
-        if (fromField != null) {
-            return fromField;
+    /**
+     * Gives every kept row an HS code: its own when the table printed one, otherwise the invoice's
+     * single common code. The key is always written, so a consumer can tell "this document states
+     * no HS code" from "the model dropped the field".
+     */
+    private void normalizeHsCode(ObjectNode item, String commonHsCode) {
+        JsonNode own = item.get("hs_code");
+        String text = own == null || own.isNull() ? "" : own.asText("").trim();
+        if (!text.isBlank()) {
+            item.put("hs_code", text);
+        } else if (commonHsCode != null) {
+            item.put("hs_code", commonHsCode);
+        } else {
+            item.putNull("hs_code");
         }
-        JsonNode content = header.get("content");
-        if (content instanceof ObjectNode contentObject) {
-            fromField = hsCodeFromFields(contentObject);
-            if (fromField != null) {
-                return fromField;
-            }
-        }
-        return findLabelledHsCode(header.toString());
     }
 
-    private String hsCodeFromFields(ObjectNode node) {
-        for (String fieldName : List.of("hs_code", "HS_CODE", "hsCode", "hscode", "HSCODE")) {
-            JsonNode value = node.get(fieldName);
-            if (value != null && !value.isNull()) {
-                String text = value.asText("").trim();
-                Matcher matcher = HS_CODE_PATTERN.matcher(text);
-                if (matcher.find()) {
-                    return matcher.group();
-                }
-                if (!text.isBlank()) {
-                    return text;
-                }
-            }
+    /**
+     * Finds the one HS code that applies to every goods line, wherever the document printed it.
+     *
+     * <p>A proforma invoice usually states its HS code once and nowhere near the goods table — in a
+     * terms block, a footer note, a header field, or only on the first row — and leaves the rest
+     * blank. So codes are collected from the whole invoice rather than from the table alone, and
+     * when all of them agree on one value, that value fills every row missing a code. This is
+     * deliberately not tied to any one layout: what decides is the agreement between the codes
+     * found, not where they were found.
+     *
+     * <p>Two or more distinct codes mean the document really does classify its rows differently.
+     * Nothing is filled in then, and a blank row stays blank — a wrong HS code on a customs
+     * declaration costs more than a missing one.
+     */
+    private String resolveCommonHsCode(ObjectNode invoice, ObjectNode header, ArrayNode items) {
+        Set<String> codes = new LinkedHashSet<>();
+        // Dedicated fields first: exact values, with no way for an amount to be read as a code.
+        collectHsCodeFields(items, codes);
+        collectHsCodeFields(header, codes);
+        if (codes.isEmpty()) {
+            // No field declared one, so fall back to labelled text anywhere in the invoice:
+            // remarks, payment terms, the content bag, a raw table dump.
+            collectLabelledHsCodes(invoice, codes);
         }
-        return null;
+        return codes.size() == 1 ? codes.iterator().next() : null;
     }
 
-    /** Finds an HS code only when it appears right after an "HS CODE"-style label, so plain
-     *  amounts like 5945.44 elsewhere in the JSON can never be mistaken for one. */
-    private String findLabelledHsCode(String text) {
-        if (text == null || text.isBlank()) {
-            return null;
+    /** Walks a subtree and collects the value of every HS-code-named field in it, at any depth. */
+    private void collectHsCodeFields(JsonNode node, Set<String> codes) {
+        if (node == null) {
+            return;
         }
-        Matcher matcher = LABELLED_HS_CODE_PATTERN.matcher(text);
-        return matcher.find() ? matcher.group(1) : null;
+        if (node.isArray()) {
+            for (JsonNode element : node) {
+                collectHsCodeFields(element, codes);
+            }
+            return;
+        }
+        if (!node.isObject()) {
+            return;
+        }
+        Iterator<Map.Entry<String, JsonNode>> fields = node.fields();
+        while (fields.hasNext()) {
+            Map.Entry<String, JsonNode> field = fields.next();
+            if (isHsCodeFieldName(field.getKey())) {
+                collectHsCodeValues(field.getValue(), codes);
+            } else {
+                collectHsCodeFields(field.getValue(), codes);
+            }
+        }
+    }
+
+    /** Reads a code out of whatever an HS-code field holds: text, a number, or a list of either. */
+    private void collectHsCodeValues(JsonNode value, Set<String> codes) {
+        if (value == null || value.isNull()) {
+            return;
+        }
+        if (value.isArray()) {
+            for (JsonNode element : value) {
+                collectHsCodeValues(element, codes);
+            }
+            return;
+        }
+        if (value.isObject()) {
+            collectHsCodeFields(value, codes);
+            return;
+        }
+        String text = value.asText("").trim();
+        if (text.isBlank()) {
+            return;
+        }
+        Matcher matcher = HS_CODE_PATTERN.matcher(text);
+        codes.add(matcher.find() ? matcher.group() : text);
+    }
+
+    /**
+     * Collects every code that follows an explicit "HS CODE" label in any text in the subtree.
+     *
+     * <p>Each string value is matched on its own rather than on the serialized JSON, so a label and
+     * a number that only became adjacent through serialization cannot be joined into a false match.
+     */
+    private void collectLabelledHsCodes(JsonNode node, Set<String> codes) {
+        if (node == null) {
+            return;
+        }
+        if (node.isContainerNode()) {
+            for (JsonNode child : node) {
+                collectLabelledHsCodes(child, codes);
+            }
+            return;
+        }
+        if (!node.isTextual()) {
+            return;
+        }
+        Matcher matcher = LABELLED_HS_CODE_PATTERN.matcher(node.asText());
+        while (matcher.find()) {
+            codes.add(matcher.group(1).replaceAll("\\s+", ""));
+        }
+    }
+
+    /** True for any spelling of an HS-code field name: hs_code, HS_CODE, hsCode, "HS Code", hscodes. */
+    private boolean isHsCodeFieldName(String fieldName) {
+        String normalized = fieldName.replaceAll("[^A-Za-z]", "").toLowerCase(Locale.ROOT);
+        return "hscode".equals(normalized) || "hscodes".equals(normalized);
     }
 
     private void normalizeAmountField(ObjectNode node, String fieldName) {

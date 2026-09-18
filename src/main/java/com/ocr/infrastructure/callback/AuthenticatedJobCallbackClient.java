@@ -108,6 +108,11 @@ public class AuthenticatedJobCallbackClient implements JobCallbackPort {
         if (jobResponse.errorMessage() != null && !jobResponse.errorMessage().isBlank()) {
             payload.put("errorMessage", jobResponse.errorMessage());
         }
+        // Quality notes travel with the result: the consumer scores the extraction and cannot
+        // judge it from the JSON alone, because a truncated payload still parses.
+        if (jobResponse.warnings() != null && !jobResponse.warnings().isEmpty()) {
+            payload.put("warnings", jobResponse.warnings());
+        }
 
         return payload;
     }

@@ -1,0 +1,18 @@
+# GPU override for the dev stack.
+#
+# The vision model on CPU takes 10-40 minutes per multi-page invoice, which is the root cause of
+# the client-side timeouts; on an NVIDIA GPU the same job finishes in 20-60 seconds. This lives in
+# an override file rather than in docker-compose.yml because `deploy.resources.reservations.devices`
+# makes Compose fail outright on a machine with no NVIDIA runtime.
+#
+# Run with:
+#   docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d
+services:
+  ollama:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
