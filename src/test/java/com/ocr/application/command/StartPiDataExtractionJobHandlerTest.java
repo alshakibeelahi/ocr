@@ -72,7 +72,7 @@ class StartPiDataExtractionJobHandlerTest {
     ocrProperties = new OcrProperties(150, 1024, 3, Boolean.FALSE);
     ollamaProperties = new OllamaProperties(
         "http://localhost:11434", "qwen2.5vl:3b", null, null, null, 8192, 60000,
-        2048, 1.1, 320, "ocr prompt", "pi prompt");
+        2048, 1.1, 320, 0, "ocr prompt", "pi prompt");
 
     doAnswer(invocation -> {
       OcrJob job = invocation.getArgument(0);

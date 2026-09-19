@@ -9,6 +9,10 @@ spring:
 
 ollama:
   base-url: ${OLLAMA_BASE_URL:http://localhost:11434}
+  # Size ladder is 3b -> 7b -> 32b -> 72b; there is no 5b. Switching is this one value, nothing
+  # else in the app is model-specific. 7b extracts noticeably more reliably but needs ~6 GB
+  # resident and runs roughly 2x slower per page, which does not finish inside the caller's
+  # timeout on a CPU-only host - hence 3b as the default. On GPU, prefer 7b.
   model: ${OLLAMA_MODEL:qwen2.5vl:3b}
   # Idle timeout: fails only if Ollama emits nothing for this long (CPU image decode is silent).
   timeout: ${OLLAMA_IDLE_TIMEOUT:10m}
@@ -17,6 +21,9 @@ ollama:
   # Keep the model loaded in (GPU) memory between jobs.
   keep-alive: ${OLLAMA_KEEP_ALIVE:30m}
   num-ctx: ${OLLAMA_NUM_CTX:8192}
+  # 0 lets Ollama choose. Set it to the host's PHYSICAL core count on a CPU-only box; more threads
+  # than cores makes generation slower, not faster.
+  num-thread: ${OLLAMA_NUM_THREAD:0}
   max-prompt-chars: 6500
   # Safety limits, not tuning. temperature 0 keeps extraction reproducible but also makes a
   # repetition loop self-sustaining, so the penalty is what actually ends one; num-predict bounds

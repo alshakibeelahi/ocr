@@ -26,6 +26,7 @@ public record OllamaProperties(
         int numPredict,
         double repeatPenalty,
         int repeatLastN,
+        int numThread,
         String ocrPrompt,
         String piDataExtractionPrompt
 ) {
@@ -55,5 +56,16 @@ public record OllamaProperties(
     /** How far back the penalty looks. Must exceed the length of a repeating unit to catch it. */
     public int repeatLastN() {
         return repeatLastN > 0 ? repeatLastN : 320;
+    }
+
+    /**
+     * Inference threads, and the one knob that matters on a CPU-only host. Zero means "omit the
+     * option and let Ollama pick", which is correct on bare metal but not always under Docker
+     * Desktop, where the container's visible CPU count can differ from the host's physical cores.
+     * Setting it above the number of physical cores slows generation down rather than speeding it
+     * up, because the threads then contend for the same cores.
+     */
+    public int numThread() {
+        return Math.max(numThread, 0);
     }
 }

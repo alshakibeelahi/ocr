@@ -35,8 +35,26 @@ The app reads everything from environment variables (defaults in
 | `OLLAMA_IDLE_TIMEOUT` | `10m` | Fail if Ollama emits nothing this long (CPU image decode is silent; on GPU set `2m`) |
 | `OLLAMA_REQUEST_TIMEOUT` | `30m` | Hard cap per extraction |
 | `OLLAMA_KEEP_ALIVE` | `30m` | Keep model loaded between jobs |
+| `OLLAMA_NUM_THREAD` | `0` | `0` = Ollama decides. On CPU set to the host's **physical** core count |
 | `OCR_MAX_IMAGE_DIMENSION` | `1536` | Lower = fewer vision tokens = faster |
+| `OCR_MAX_PAGES` | `3` | Pages sent in one request; × per-page vision tokens must fit `OLLAMA_NUM_CTX` |
 | `CALLBACK_AUTH_*` | — | Keycloak token URL / client id / secret for callback delivery |
+
+### Switching model size
+
+Nothing in the app is model-specific, so the size change is one variable. The
+ladder is `3b` → `7b` → `32b` → `72b`; there is no 5b.
+
+```powershell
+$env:OLLAMA_MODEL="qwen2.5vl:7b"   # up to the larger model
+docker compose up -d               # ollama-init pulls it if missing
+```
+
+| Model | Resident | Notes |
+|---|---|---|
+| `qwen2.5vl:3b` | ~3.2 GB | Default. Fastest; weaker on dense tables and multi-column layouts |
+| `qwen2.5vl:7b` | ~6.0 GB | ~2× slower than 3b, clearly better extraction. Needs `OLLAMA_IDLE_TIMEOUT=15m`, `OLLAMA_REQUEST_TIMEOUT=45m` on CPU |
+| `qwen2.5vl:32b` | ~21 GB | GPU only |
 
 ## Offline deployment (export tar, run on any server)
 
@@ -50,7 +68,7 @@ the tar, ONE `docker-compose.yml`, `.env`, `README.md`:
 .\scripts\docker-image-exporter.ps1 -Version "1.0.0"                  # NVIDIA/CPU image
 .\scripts\docker-image-exporter.ps1 -Version "1.0.0" -Gpu rocm        # AMD server
 .\scripts\docker-image-exporter.ps1 -Version "1.0.0" -Gpu both        # ship both (bigger tar)
-.\scripts\docker-image-exporter.ps1 -Version "1.1.0" -Model "qwen2.5vl:7b"
+.\scripts\docker-image-exporter.ps1 -Version "1.1.0" -Model "qwen2.5vl:3b"
 .\scripts\docker-image-exporter.ps1 -Version "1.0.0" -SkipBuild       # reuse local ocr-app image
 .\scripts\docker-image-exporter.ps1 -Version "1.0.0" -SkipModelBake   # ship plain Ollama, pull model on target
 ```
@@ -79,10 +97,35 @@ no scripts needed on the server.
 
 | VRAM | Expected speed | Recommended .env |
 |---|---|---|
-| CPU only | 5–10 min/doc | — |
+| CPU only | see below | `OLLAMA_NUM_THREAD=<physical cores>`, `OCR_RENDER_DPI=150`, `OCR_MAX_IMAGE_DIMENSION=1024`, `OCR_MAX_PAGES=2`, stay on `3b` |
 | 2–3 GB | 2–5× CPU (partial offload) | `OLLAMA_NUM_CTX=4096`, `OCR_MAX_IMAGE_DIMENSION=1024` |
 | 4 GB | ~1–2 min/doc | `OLLAMA_NUM_CTX=4096`, `OCR_MAX_IMAGE_DIMENSION=1280` |
 | ≥ 6 GB | 10–30 s/doc (full offload) | defaults |
+
+### CPU-only hosts
+
+On CPU the render settings decide whether a job finishes at all — every extra
+pixel is vision tokens the CPU decodes serially. On a 4-core / 16 GB desktop
+with `qwen2.5vl:3b`, expect **roughly 5–12 min per page** at 150 DPI / 1024 px;
+`qwen2.5vl:7b` is about 2× that and needs the longer timeouts above.
+
+Three things bite on a 16 GB machine specifically:
+
+- `JAVA_OPTS=-XX:MaxRAMPercentage=75.0` hands the JVM ~12 GB in a container with
+  no memory limit, leaving nothing for the model. Set `JAVA_OPTS=-Xmx1g`.
+- On Docker Desktop the model lives in the WSL2 VM, which defaults to ~half of
+  host RAM. Measured here: 7b is 5.7 GB resident against a ~8 GB cap — it fits,
+  barely. Raise it in `%USERPROFILE%\.wslconfig` (`[wsl2]` / `memory=10GB`) then
+  `wsl --shutdown`.
+- Once the model is evicted, a job goes from minutes to hours. Close the IDE and
+  browser, or stay on `qwen2.5vl:3b`.
+
+A non-streaming call to `localhost:11434` from the host dies at exactly 30s
+while a large model loads — that is Docker Desktop's port-forwarder dropping an
+idle connection, not Ollama. The app is unaffected because it streams.
+
+Setting `OLLAMA_NUM_THREAD` above the physical core count makes generation
+*slower* — the threads contend for the same cores. Count cores, not hyperthreads.
 
 `OLLAMA_FLASH_ATTENTION=1` + `OLLAMA_KV_CACHE_TYPE=q8_0` are set by default —
 they roughly halve KV-cache memory and are harmless on CPU/big GPUs. AMD

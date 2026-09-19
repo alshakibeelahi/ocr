@@ -1,5 +1,6 @@
 package com.ocr.infrastructure.ollama;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.ocr.application.port.OllamaVisionPort;
@@ -66,6 +67,9 @@ public class OllamaVisionClient implements OllamaVisionPort {
         options.put("num_predict", properties.numPredict());
         options.put("repeat_penalty", properties.repeatPenalty());
         options.put("repeat_last_n", properties.repeatLastN());
+        if (properties.numThread() > 0) {
+            options.put("num_thread", properties.numThread());
+        }
         body.put("options", options);
         body.put("messages", List.of(Map.of(
                 "role", "user",
@@ -140,17 +144,19 @@ public class OllamaVisionClient implements OllamaVisionPort {
         if (line == null || line.isBlank()) {
             return;
         }
+        String content;
         try {
             JsonNode root = objectMapper.readTree(line);
             JsonNode message = root.path("message");
-            if (message.hasNonNull("content")) {
-                String content = message.get("content").asText();
-                if (!content.isEmpty()) {
-                    onChunk.accept(content);
-                }
-            }
-        } catch (Exception e) {
+            content = message.hasNonNull("content") ? message.get("content").asText() : "";
+        } catch (JsonProcessingException e) {
             throw new IllegalStateException("Failed to parse Ollama stream response: " + line, e);
+        }
+        // Deliberately outside the catch above. Callers signal "stop consuming this stream" by
+        // throwing from the consumer, and wrapping that in a parse error both loses the signal the
+        // caller catches on and blames the payload for something that parsed fine.
+        if (!content.isEmpty()) {
+            onChunk.accept(content);
         }
     }
 }
