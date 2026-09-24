@@ -55,6 +55,16 @@ public class StartPiDataExtractionJobHandler {
             "(?i)\\bH\\.?\\s*S\\.?\\s*CODE[Ss]?\\s*(?:NO\\.?|#)?\\s*[:\\-]?\\s*"
                     + "(\\d{4}(?:\\s*\\.\\s*\\d{1,4}){0,2})");
     private static final Pattern DRAFT_DAYS_PATTERN = Pattern.compile("(?i)\\b(?:at\\s*)?(\\d{1,3})\\s*days?\\s+sight\\b");
+    // SWIFT/BIC: 4-letter bank code + 2-letter country code + 2 alphanumeric location chars,
+    // plus an optional 3-char branch code. Anything else is not a real SWIFT code, whatever the
+    // model returned it as.
+    private static final Pattern SWIFT_PATTERN = Pattern.compile("^[A-Z]{6}[A-Z0-9]{2}([A-Z0-9]{3})?$");
+    // ISO 4217 alphabetic code shape. Catches "US$", "Dollar", or a currency borrowed from
+    // somewhere else on the page just as reliably as the SWIFT check catches a fabricated SWIFT.
+    private static final Pattern CURRENCY_CODE_PATTERN = Pattern.compile("^[A-Z]{3}$");
+    // draft_at_days / pi_validity_days are always a plain day count; this pulls the count out of
+    // whatever text arrived and discards the rest rather than trusting it whole.
+    private static final Pattern DAY_COUNT_PATTERN = Pattern.compile("\\d{1,4}");
     private static final Pattern USD_HINT_PATTERN = Pattern.compile("(?i)\\bU\\.?S\\.?\\s*(?:\\$|DOLLAR)|\\bUSD\\b|\\bUS\\$");
     private static final Pattern EUR_HINT_PATTERN = Pattern.compile("(?i)\\bEURO?\\b|€");
     private static final Pattern GBP_HINT_PATTERN = Pattern.compile("(?i)\\bGBP\\b|\\bPOUND\\s+STERLING\\b|£");
@@ -400,11 +410,33 @@ public class StartPiDataExtractionJobHandler {
         }
 
         normalizeDraftAtDays(header);
+        normalizeNumericDays(header, "pi_validity_days");
         normalizePartialShipment(header);
         normalizeCurrency(header, invoice);
+        normalizeSwift(header);
+    }
+
+    /**
+     * Small vision models sometimes fabricate a SWIFT/BIC value from a nearby phone, account, or
+     * routing number rather than returning null when the document prints no such code. A real
+     * SWIFT/BIC has a fixed shape, so anything that does not match it is discarded here rather than
+     * passed on as if it were read from the document.
+     */
+    private void normalizeSwift(ObjectNode header) {
+        JsonNode swift = header.get("swift");
+        if (swift == null || swift.isNull()) {
+            return;
+        }
+        String candidate = swift.asText("").trim().toUpperCase(Locale.ROOT).replace(" ", "");
+        if (SWIFT_PATTERN.matcher(candidate).matches()) {
+            header.put("swift", candidate);
+        } else {
+            header.putNull("swift");
+        }
     }
 
     private void normalizeCurrency(ObjectNode header, ObjectNode invoice) {
+        discardMalformedCurrency(header);
         JsonNode currency = header.get("currency");
         if (currency != null && !currency.isNull() && !currency.asText().isBlank()) {
             return;
@@ -427,6 +459,25 @@ public class StartPiDataExtractionJobHandler {
             if (content instanceof ObjectNode contentObject) {
                 contentObject.put("CURRENCY_SOURCE", "inferred-from-text");
             }
+        }
+    }
+
+    /**
+     * A currency is a 3-letter ISO 4217 code, nothing else. "US$", "Dollar", or a code borrowed
+     * from an unrelated field on the page are cleared here rather than passed on as if they were
+     * a code read from the document, so the text-based inference right after this runs exactly as
+     * it would for a field the model never filled in at all.
+     */
+    private void discardMalformedCurrency(ObjectNode header) {
+        JsonNode currency = header.get("currency");
+        if (currency == null || currency.isNull()) {
+            return;
+        }
+        String candidate = currency.asText("").trim().toUpperCase(Locale.ROOT);
+        if (CURRENCY_CODE_PATTERN.matcher(candidate).matches()) {
+            header.put("currency", candidate);
+        } else {
+            header.putNull("currency");
         }
     }
 
@@ -647,6 +698,7 @@ public class StartPiDataExtractionJobHandler {
     }
 
     private void normalizeDraftAtDays(ObjectNode header) {
+        normalizeNumericDays(header, "draft_at_days");
         JsonNode draftAtDays = header.get("draft_at_days");
         if (draftAtDays != null && !draftAtDays.isNull() && !draftAtDays.asText().isBlank()) {
             return;
@@ -655,6 +707,24 @@ public class StartPiDataExtractionJobHandler {
         Matcher matcher = DRAFT_DAYS_PATTERN.matcher(paymentTerms);
         if (matcher.find()) {
             header.put("draft_at_days", matcher.group(1));
+        }
+    }
+
+    /**
+     * A day count is always just digits. Whatever text the model wrapped it in is discarded rather
+     * than trusted, and a value with no digits at all is treated the same as one that was never
+     * extracted, so the caller's existing "fill it in if missing" fallback still runs.
+     */
+    private void normalizeNumericDays(ObjectNode header, String fieldName) {
+        JsonNode value = header.get(fieldName);
+        if (value == null || value.isNull()) {
+            return;
+        }
+        Matcher matcher = DAY_COUNT_PATTERN.matcher(value.asText(""));
+        if (matcher.find()) {
+            header.put(fieldName, matcher.group());
+        } else {
+            header.putNull(fieldName);
         }
     }
 

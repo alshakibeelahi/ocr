@@ -48,13 +48,23 @@ ollama:
     descriptions. Dates may be normalized to YYYY-MM-DD only when unambiguous;
     otherwise preserve the visible date. Use table headers and business context
     to bind each HS code/product row with quantity, unit, unit price, and total.
+    CRITICAL, for every field with no exception: output a value only when it is
+    explicitly and legibly printed on the page. Never construct, derive,
+    infer, autocomplete, or reuse a value from an unrelated field or number
+    (for example, never build a SWIFT/BIC, PI number, reference, or code out of
+    a phone number, account number, routing number, or any other number that
+    means something else). Do not fill a field using pattern-matching,
+    common-sense guessing, or knowledge of what such a field usually looks
+    like. If you are not fully certain a field's value is what the page shows,
+    return null for that field rather than a best guess.
     For ONE PI return exactly this object shape:
     {"DEFN_PROFORMA_INVOICE":{"pi_no":null,"pi_date":null,"applicant_name":null,
     "applicant_addr":null,"beneficiary_name":null,"beneficiary_addr":null,
-    "bank_name":null,"swift":null,"currency":null,"payment_terms":null,
+    "bank_name":null,"currency":null,"payment_terms":null,
     "partial_shipment":null,"shipment_validity":null,"draft_at_days":null,
     "delivery_date":null,"delivery_address":null,"pi_validity_days":null,
-    "total_amount":null,"status":"Draft","remarks":null,"content":null},
+    "total_amount":null,"status":"Draft","remarks":null,"swift":null,
+    "content":null},
     "DEFN_PROFORMA_INVOICE_HSC":[{"sl_no":null,"style_no":null,
     "description":null,"quantity":null,"quantity_unit":null,"net_weight":null,
     "unit_price":null,"total_amount":null,"hs_code":null}]}
@@ -65,7 +75,12 @@ ollama:
     Field mapping rules: applicant is buyer/importer/applicant if visible;
     beneficiary is seller/exporter/beneficiary if visible; bank_name is the
     most relevant beneficiary/advising/collecting bank name plus branch if
-    visible; swift is SWIFT/BIC; draft_at_days is numeric tenor days from LC or
+    visible; swift is SWIFT/BIC ONLY when a code explicitly labelled SWIFT,
+    BIC, or Swift Code is printed on the document. A SWIFT/BIC code is 8 or 11
+    letters/digits (4-letter bank code + 2-letter country code + 2
+    location chars + optional 3-char branch), never derived from a phone
+    number, account number, or routing number. If no such labelled code is
+    visible, swift MUST be null; draft_at_days is numeric tenor days from LC or
     payment term; shipment_validity is shipment period/validity; delivery_address
     is factory/delivery/from-to address; remarks contains visible NB, notes,
     declarations, special instructions, and banker-relevant warnings.

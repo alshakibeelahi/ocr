@@ -260,6 +260,116 @@ class StartPiDataExtractionJobHandlerTest {
     assertThat(items.get(0).get("hs_code").isNull()).isTrue();
   }
 
+  /**
+   * The exact failure seen in production: no SWIFT code is printed on the document, but a small
+   * vision model fabricated one from the nearby phone number instead of returning null. Anything
+   * that is not shaped like a real SWIFT/BIC is discarded rather than passed on as if it were read
+   * from the page.
+   */
+  @Test
+  void fabricatedSwiftValue_isDiscarded() throws Exception {
+    modelReturns("""
+        {
+          "DEFN_PROFORMA_INVOICE": { "pi_no": "PI-905", "swift": "BDU1970D1970D1970D1970D1970D197" },
+          "DEFN_PROFORMA_INVOICE_HSC": []
+        }
+        """);
+
+    newHandler().handle(command(1));
+
+    JsonNode header = callbackExtraction()
+        .get("PROFORMA_INVOICES").get(0).get("DEFN_PROFORMA_INVOICE");
+    assertThat(header.get("swift").isNull()).isTrue();
+  }
+
+  /** A genuine SWIFT/BIC is kept, normalized to upper case with no stray whitespace. */
+  @Test
+  void wellFormedSwiftValue_isKeptAndUppercased() throws Exception {
+    modelReturns("""
+        {
+          "DEFN_PROFORMA_INVOICE": { "pi_no": "PI-906", "swift": "sebd bd dh" },
+          "DEFN_PROFORMA_INVOICE_HSC": []
+        }
+        """);
+
+    newHandler().handle(command(1));
+
+    JsonNode header = callbackExtraction()
+        .get("PROFORMA_INVOICES").get(0).get("DEFN_PROFORMA_INVOICE");
+    assertThat(header.get("swift").asText()).isEqualTo("SEBDBDDH");
+  }
+
+  /** Not a real ISO code, so it is discarded rather than passed through as if it were read. */
+  @Test
+  void malformedCurrencyValue_isDiscarded() throws Exception {
+    modelReturns("""
+        {
+          "DEFN_PROFORMA_INVOICE": { "pi_no": "PI-907", "currency": "US$" },
+          "DEFN_PROFORMA_INVOICE_HSC": []
+        }
+        """);
+
+    newHandler().handle(command(1));
+
+    JsonNode header = callbackExtraction()
+        .get("PROFORMA_INVOICES").get(0).get("DEFN_PROFORMA_INVOICE");
+    assertThat(header.get("currency").isNull()).isTrue();
+  }
+
+  /** A malformed currency still falls through to text-based inference, same as a blank one would. */
+  @Test
+  void malformedCurrencyValue_stillFallsBackToTextInference() throws Exception {
+    modelReturns("""
+        {
+          "DEFN_PROFORMA_INVOICE": {
+            "pi_no": "PI-908", "currency": "Dollar",
+            "remarks": "PAYMENT WILL BE MADE BY US DOLLAR"
+          },
+          "DEFN_PROFORMA_INVOICE_HSC": []
+        }
+        """);
+
+    newHandler().handle(command(1));
+
+    JsonNode header = callbackExtraction()
+        .get("PROFORMA_INVOICES").get(0).get("DEFN_PROFORMA_INVOICE");
+    assertThat(header.get("currency").asText()).isEqualTo("USD");
+  }
+
+  /** A day count wrapped in extra text (e.g. a fabricated unit) is reduced to the digits alone. */
+  @Test
+  void draftAtDaysWithExtraText_isReducedToTheDigitsAlone() throws Exception {
+    modelReturns("""
+        {
+          "DEFN_PROFORMA_INVOICE": { "pi_no": "PI-909", "draft_at_days": "120 days sight" },
+          "DEFN_PROFORMA_INVOICE_HSC": []
+        }
+        """);
+
+    newHandler().handle(command(1));
+
+    JsonNode header = callbackExtraction()
+        .get("PROFORMA_INVOICES").get(0).get("DEFN_PROFORMA_INVOICE");
+    assertThat(header.get("draft_at_days").asText()).isEqualTo("120");
+  }
+
+  /** No digits at all means the value was not really a day count, so it is dropped. */
+  @Test
+  void piValidityDaysWithNoDigits_isDiscarded() throws Exception {
+    modelReturns("""
+        {
+          "DEFN_PROFORMA_INVOICE": { "pi_no": "PI-910", "pi_validity_days": "N/A" },
+          "DEFN_PROFORMA_INVOICE_HSC": []
+        }
+        """);
+
+    newHandler().handle(command(1));
+
+    JsonNode header = callbackExtraction()
+        .get("PROFORMA_INVOICES").get(0).get("DEFN_PROFORMA_INVOICE");
+    assertThat(header.get("pi_validity_days").isNull()).isTrue();
+  }
+
   @Test
   void multiInvoiceResult_keepsItsEnvelopeUntouched() throws Exception {
     modelReturns("""
